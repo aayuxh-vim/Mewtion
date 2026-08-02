@@ -1,0 +1,13 @@
+[package]
+name = "motion-dots"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gtk4 = { version = "0.10", package = "gtk4", features = ["v4_12"] }
+gdk4-x11 = "0.10"
+x11rb = { version = "0.13", features = ["shape"] }
+glib = "0.21"
+
+[profile.release]
+opt-level = 2
