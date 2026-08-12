@@ -1,46 +1,50 @@
-
-
-
-
-
-
-
-
-
-
-
-// motion-dots: Phase 1 prototype
+// motion-dots: Phase 5 -- Detaching Anchors
 //
-// A transparent, always-on-top, click-through overlay that draws dots
-// drifting at the screen edges, driven (for now) by a fake sine wave
-// instead of real accelerometer data.
-//
-// Runs via XWayland override-redirect, so it works the same way whether
-// the underlying compositor is Hyprland, KWin, or Mutter -- as long as
-// XWayland is available (it is, by default, on all three).
-//
-// NOTE: this must be run on a real desktop session with a display server.
-// It will not do anything useful in a headless container.
+// 10 fixed dots on each side. When stationary, they are locked in place.
+// When motion occurs, the fixed dots detach and blow away, while new organic 
+// dots spawn. When motion stops, the 10 fixed dots fade back into their slots.
+
+mod tcp;
 
 use gtk4::prelude::*;
 use gtk4::{glib, Application, ApplicationWindow, DrawingArea};
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Instant;
 
 const APP_ID: &str = "dev.motiondots.Overlay";
-const DOT_COUNT: usize = 24;
-const DOT_RADIUS: f64 = 4.0;
 
-/// Fake motion state. Later this gets replaced by real accel data
-/// (either from /sys/bus/iio or from the phone-over-BLE bridge).
-/// Keeping this as a plain (x, y) drift offset in [-1.0, 1.0] range
-/// means the render code never needs to know where the data came from.
-#[derive(Clone, Copy, Default)]
-struct MotionSample {
-    x: f64,
-    y: f64,
+// --- Particle System State ---
+
+struct Rng { state: u32 }
+impl Rng {
+    fn new() -> Self { Rng { state: 42 } }
+    fn next_f64(&mut self) -> f64 {
+        self.state ^= self.state << 13;
+        self.state ^= self.state >> 17;
+        self.state ^= self.state << 5;
+        (self.state as f64) / (u32::MAX as f64)
+    }
 }
+
+struct Particle {
+    nx: f64,
+    ny: f64,
+    life: f64,
+    fade_rate: f64,
+    size: f64,
+    is_anchor: bool, // Helps us treat the 10 fixed dots differently than moving dots
+}
+
+struct AppState {
+    target_x: f64,
+    target_y: f64,
+    current_x: f64,
+    current_y: f64,
+    particles: Vec<Particle>,
+    rng: Rng,
+}
+
+// --- Main Application ---
 
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
@@ -56,55 +60,49 @@ fn build_ui(app: &Application) {
         .resizable(false)
         .build();
 
-    // Full-screen-sized transparent canvas. We don't know the real
-    // monitor size in this generic build step, so default to something
-    // reasonable; swap for gdk4::Monitor geometry once you wire up
-    // multi-monitor support.
     window.set_default_size(1920, 1080);
 
-    // Transparent background via CSS -- GTK4 windows are already capable
-    // of alpha compositing as long as the compositor supports it, which
-    // all three targets do.
     let css = gtk4::CssProvider::new();
-    css.load_from_data("window { background: transparent; }");
+    css.load_from_string("window { background: transparent; }");
     gtk4::style_context_add_provider_for_display(
         &gtk4::gdk::Display::default().expect("no default display"),
         &css,
         gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
 
-    let motion = Rc::new(RefCell::new(MotionSample::default()));
-    let start = Instant::now();
+    let state = Rc::new(RefCell::new(AppState {
+        target_x: 0.0,
+        target_y: 0.0,
+        current_x: 0.0,
+        current_y: 0.0,
+        particles: Vec::new(),
+        rng: Rng::new(),
+    }));
 
     let drawing_area = DrawingArea::new();
     drawing_area.set_content_width(1920);
     drawing_area.set_content_height(1080);
 
     {
-        let motion = motion.clone();
+        let state = state.clone();
         drawing_area.set_draw_func(move |_area, cr, width, height| {
-            let m = *motion.borrow();
+            let s = state.borrow();
             let w = width as f64;
             let h = height as f64;
 
             cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
             cr.paint().ok();
 
-            cr.set_source_rgba(1.0, 1.0, 1.0, 0.55);
+            for p in &s.particles {
+                // Anchors use straight opacity. Flow dots use a sine curve to fade in and out.
+                let alpha = if p.is_anchor {
+                    p.life 
+                } else {
+                    (p.life * std::f64::consts::PI).sin() * 0.75
+                }; 
 
-            // Dots ringed around the edges, each offset by the current
-            // motion sample -- mirrors the "drift opposite to motion"
-            // behavior Apple's Vehicle Motion Cues uses.
-            for i in 0..DOT_COUNT {
-                let t = i as f64 / DOT_COUNT as f64;
-                let angle = t * std::f64::consts::TAU;
-                let edge_x = w / 2.0 + (w / 2.0 - 20.0) * angle.cos();
-                let edge_y = h / 2.0 + (h / 2.0 - 20.0) * angle.sin();
-
-                let dx = edge_x + m.x * 30.0;
-                let dy = edge_y + m.y * 30.0;
-
-                cr.arc(dx, dy, DOT_RADIUS, 0.0, std::f64::consts::TAU);
+                cr.set_source_rgba(1.0, 1.0, 1.0, alpha);
+                cr.arc(p.nx * w, p.ny * h, p.size, 0.0, std::f64::consts::TAU);
                 cr.fill().ok();
             }
         });
@@ -112,7 +110,6 @@ fn build_ui(app: &Application) {
 
     window.set_child(Some(&drawing_area));
 
-    // Real X11 setup happens once the underlying surface exists.
     {
         let window_weak = window.downgrade();
         window.connect_realize(move |_| {
@@ -124,29 +121,119 @@ fn build_ui(app: &Application) {
 
     window.present();
 
-    // Fake sine-wave motion source, ~60fps. Swap this closure for a
-    // real sensor read (IIO poll or BLE packet handler) later --
-    // nothing else in this file needs to change.
+    let (sender, receiver) = std::sync::mpsc::channel::<tcp::AccelSample>();
+
+    std::thread::spawn(move || {
+        tcp::run_tcp_bridge_blocking(move |sample| {
+            let _ = sender.send(sample);
+        });
+    });
+
     {
-        let motion = motion.clone();
+        let state_for_loop = state.clone();
         let drawing_area = drawing_area.clone();
-        glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
-            let t = start.elapsed().as_secs_f64();
-            let mut m = motion.borrow_mut();
-            m.x = (t * 0.8).sin();
-            m.y = (t * 0.5).cos() * 0.6;
-            drop(m);
+        const ACCEL_SENSITIVITY: f32 = 3.0;
+
+ glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
+            // Unpack the RefMut smart pointer into a raw mutable reference
+            let mut s_guard = state_for_loop.borrow_mut();
+            let s = &mut *s_guard;
+
+            while let Ok(sample) = receiver.try_recv() {              s.target_x = (sample.x / ACCEL_SENSITIVITY).clamp(-1.0, 1.0) as f64;
+                s.target_y = (sample.y / ACCEL_SENSITIVITY).clamp(-1.0, 1.0) as f64;
+            }
+
+            // Lowered to 0.04 for buttery smooth momentum
+            s.current_x += (s.target_x - s.current_x) * 0.04;
+            s.current_y += (s.target_y - s.current_y) * 0.04;
+
+            let speed = (s.current_x.powi(2) + s.current_y.powi(2)).sqrt();
+            let is_moving = speed > 0.025; // Deadzone
+
+            if is_moving {
+                // 1. DETACH ANCHORS: The moment we move, unlock the 10 fixed dots.
+                for p in &mut s.particles {
+                    if p.is_anchor {
+                        p.is_anchor = false;
+                        
+                        // Seamless opacity handoff: sin(0.5 * PI) * 0.75 = 0.75.
+                        // This prevents them from flickering when they switch to flow dots.
+                        p.life = 0.5; 
+                        p.fade_rate = 0.005 + s.rng.next_f64() * 0.01;
+                    }
+                }
+
+                // 2. SPAWN FLOW DOTS: Keep the screen populated while moving
+                let target_count = 35 + (speed * 30.0) as usize;
+                if s.particles.len() < target_count {
+                    for _ in 0..3 {
+                        if s.particles.len() >= target_count { break; }
+
+                        let is_left = s.rng.next_f64() < 0.5;
+                        let nx = if is_left { 0.01 + s.rng.next_f64() * 0.05 } else { 0.94 + s.rng.next_f64() * 0.05 };
+                        let ny = s.rng.next_f64();
+                        
+                        let random_fade = 0.005 + s.rng.next_f64() * 0.01;
+                        let random_size = 7.0 + s.rng.next_f64() * 3.0; // Bigger moving dots
+
+                        s.particles.push(Particle {
+                            nx,
+                            ny,
+                            life: 1.0, // Starts at 1.0 so the sine wave fades it up from 0
+                            fade_rate: random_fade, 
+                            size: random_size,
+                            is_anchor: false,
+                        });
+                    }
+                }
+            } else {
+                // 3. RESPAWN ANCHORS: We stopped. Check if our 20 anchors exist.
+                let anchor_count = s.particles.iter().filter(|p| p.is_anchor).count();
+                
+                if anchor_count == 0 {
+                    // Populate exactly 10 slots on the left and 10 on the right
+                    for i in 0..10 {
+                        let ny = (i as f64 + 0.5) / 10.0;
+                        
+                        // Left anchor
+                        s.particles.push(Particle {
+                            nx: 0.03, ny, life: 0.0, fade_rate: 0.0, size: 8.0, is_anchor: true,
+                        });
+                        // Right anchor
+                        s.particles.push(Particle {
+                            nx: 0.97, ny, life: 0.0, fade_rate: 0.0, size: 8.0, is_anchor: true,
+                        });
+                    }
+                }
+            }
+
+            // 4. APPLY PHYSICS
+            let cx = s.current_x;
+            let cy = s.current_y;
+            
+            for p in &mut s.particles {
+                if p.is_anchor {
+                    // Anchors don't move. They just gently fade up to their target opacity (0.75).
+                    p.life += (0.75 - p.life) * 0.05;
+                } else {
+                    // Flow dots drift and die
+                    p.nx += cx * 0.01;
+                    p.ny += cy * 0.01;
+                    p.life -= p.fade_rate;
+                }
+            }
+            
+            // Cleanup dead dots
+            s.particles.retain(|p| p.life > 0.0 && p.nx > -0.1 && p.nx < 1.1 && p.ny > -0.1 && p.ny < 1.1);
+
             drawing_area.queue_draw();
             glib::ControlFlow::Continue
         });
     }
 }
 
-/// Make the window an override-redirect, always-on-top, click-through
-/// overlay via raw X11 (through XWayland). This is the part that lets
-/// the same binary behave correctly whether it's actually running under
-/// Hyprland, KWin, or Mutter -- they all proxy XWayland clients the same
-/// way, so we never touch a compositor-specific Wayland protocol here.
+// --- Window Manager Hints ---
+
 fn make_overlay_click_through_and_always_on_top(window: &ApplicationWindow) {
     use gdk4_x11::X11Surface;
     use x11rb::connection::Connection;
@@ -154,96 +241,33 @@ fn make_overlay_click_through_and_always_on_top(window: &ApplicationWindow) {
     use x11rb::protocol::xproto::{
         AtomEnum, ChangeWindowAttributesAux, ClipOrdering, ConnectionExt, PropMode,
     };
-    use x11rb::wrapper::ConnectionExt as _; // brings change_property32 into scope
+    use x11rb::wrapper::ConnectionExt as _; 
 
     let Some(surface) = window.surface() else { return };
-    let Some(x11_surface) = surface.downcast_ref::<X11Surface>() else {
-        eprintln!(
-            "motion-dots: not running under XWayland/X11, skipping overlay setup \
-             (window will still show, but won't be click-through or always-on-top)"
-        );
-        return;
-    };
+    let Some(x11_surface) = surface.downcast_ref::<X11Surface>() else { return };
 
     let xid = x11_surface.xid();
-
-    let Ok((conn, screen_num)) = x11rb::connect(None) else {
-        eprintln!("motion-dots: failed to open raw X11 connection");
-        return;
-    };
+    let Ok((conn, screen_num)) = x11rb::connect(None) else { return };
     let screen = &conn.setup().roots[screen_num];
     let win = xid as u32;
 
-    // 1. Override-redirect: tells the WM to leave this window alone
-    //    entirely (no decorations, no focus stealing, no taskbar entry).
     let aux = ChangeWindowAttributesAux::new().override_redirect(1u32);
-    let r: Result<(), Box<dyn std::error::Error>> = (|| {
-        conn.change_window_attributes(win, &aux)?.check()?;
-        Ok(())
-    })();
-    eprintln!("motion-dots: override_redirect: {r:?}");
+    let _ = conn.change_window_attributes(win, &aux);
 
-    // 2. _NET_WM_STATE_ABOVE: keep it above normal windows.
-    if let (Ok(state_atom), Ok(above_atom)) = (
-        intern(&conn, "_NET_WM_STATE"),
-        intern(&conn, "_NET_WM_STATE_ABOVE"),
-    ) {
-        let r: Result<(), Box<dyn std::error::Error>> = (|| {
-            conn.change_property32(
-                PropMode::REPLACE,
-                win,
-                state_atom,
-                AtomEnum::ATOM,
-                &[above_atom],
-            )?
-            .check()?;
-            Ok(())
-        })();
-        eprintln!("motion-dots: _NET_WM_STATE_ABOVE: {r:?}");
+    if let (Ok(state_atom), Ok(above_atom)) = (intern(&conn, "_NET_WM_STATE"), intern(&conn, "_NET_WM_STATE_ABOVE")) {
+        let _ = conn.change_property32(PropMode::REPLACE, win, state_atom, AtomEnum::ATOM, &[above_atom]);
     }
 
-    // 3. _NET_WM_WINDOW_TYPE_UTILITY: hints WMs to treat it as a
-    //    non-interactive utility overlay rather than a normal window.
-    if let (Ok(type_atom), Ok(utility_atom)) = (
-        intern(&conn, "_NET_WM_WINDOW_TYPE"),
-        intern(&conn, "_NET_WM_WINDOW_TYPE_UTILITY"),
-    ) {
-        let r: Result<(), Box<dyn std::error::Error>> = (|| {
-            conn.change_property32(
-                PropMode::REPLACE,
-                win,
-                type_atom,
-                AtomEnum::ATOM,
-                &[utility_atom],
-            )?
-            .check()?;
-            Ok(())
-        })();
-        eprintln!("motion-dots: _NET_WM_WINDOW_TYPE: {r:?}");
+    if let (Ok(type_atom), Ok(utility_atom)) = (intern(&conn, "_NET_WM_WINDOW_TYPE"), intern(&conn, "_NET_WM_WINDOW_TYPE_UTILITY")) {
+        let _ = conn.change_property32(PropMode::REPLACE, win, type_atom, AtomEnum::ATOM, &[utility_atom]);
     }
 
-    // 4. Click-through: set an empty *input* shape region, so all
-    //    clicks/scrolls pass straight through to whatever is underneath.
-    //    The window still *renders* normally -- only input is affected.
-    let r: Result<(), Box<dyn std::error::Error>> = (|| {
-        conn.shape_rectangles(SO::SET, SK::INPUT, ClipOrdering::UNSORTED, win, 0, 0, &[])?
-            .check()?;
-        Ok(())
-    })();
-    eprintln!("motion-dots: shape_rectangles (click-through): {r:?}");
-
+    let _ = conn.shape_rectangles(SO::SET, SK::INPUT, ClipOrdering::UNSORTED, win, 0, 0, &[]);
     let _ = conn.flush();
-    let _ = screen; // silence unused warning if you strip pieces above
+    let _ = screen; 
 }
 
-fn intern(
-    conn: &impl x11rb::connection::Connection,
-    name: &str,
-) -> Result<x11rb::protocol::xproto::Atom, ()> {
+fn intern(conn: &impl x11rb::connection::Connection, name: &str) -> Result<x11rb::protocol::xproto::Atom, ()> {
     use x11rb::protocol::xproto::ConnectionExt;
-    conn.intern_atom(false, name.as_bytes())
-        .map_err(|_| ())?
-        .reply()
-        .map(|r| r.atom)
-        .map_err(|_| ())
+    conn.intern_atom(false, name.as_bytes()).map_err(|_| ())?.reply().map(|r| r.atom).map_err(|_| ())
 }
