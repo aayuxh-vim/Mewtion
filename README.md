@@ -26,19 +26,39 @@ The system consists of three parts working together for ultra-low latency:
 
 ## Prerequisites
 
-- Linux desktop environment with a **Wayland compositor supporting Layer Shell**
-- **Rust / Cargo**
-- **ADB (Android Debug Bridge)** for the Android fallback
-  - On Arch Linux:
+* Linux desktop environment with a **Wayland compositor supporting Layer Shell**
+* **Rust / Cargo**
+* **ADB (Android Debug Bridge)** for the Android fallback
+
+  * On Arch Linux:
+
     ```bash
     sudo pacman -S android-tools
     ```
-- An Android device with **USB Debugging** enabled if using the phone fallback
-- A laptop with a supported accelerometer for laptop-based sensor input
+* An Android device running the **[Mewtion-Android](https://github.com/aayuxh-vim/Mewtion-Android)** companion app with **USB Debugging** enabled
+* A laptop with a supported accelerometer for laptop-based sensor input
 
-## Usage
+## Usage & Automation
 
-### 1. Build Mewtion
+### Quick Start (Using the Shell Script)
+
+We provide an automated `run.sh` script that checks for your connected Android device, sets up ADB port forwarding automatically, and launches the Mewtion overlay in release mode.
+
+1. Make sure the script is executable (first time only):
+
+   ```bash
+   chmod +x run.sh
+   ```
+
+2. Run everything in one go:
+
+   ```bash
+   ./run.sh
+   ```
+
+### Manual Setup & Running
+
+#### 1. Build Mewtion
 
 Clone the repository and build the Linux overlay:
 
@@ -46,48 +66,29 @@ Clone the repository and build the Linux overlay:
 cargo build --release
 ```
 
-### 2. Run Mewtion
+#### 2. Android Fallback Setup
+
+If your laptop does not have a compatible accelerometer:
+
+1. Download and install the companion app from the **[Mewtion-Android Repository](https://github.com/aayuxh-vim/Mewtion-Android)**.
+
+2. Connect your phone via USB with USB Debugging enabled.
+
+3. Forward the sensor TCP port:
+
+   ```bash
+   adb forward tcp:8765 tcp:8765
+   ```
+
+4. Open the Mewtion app on your phone. It features a background foreground service so it can stay active even when minimized.
+
+#### 3. Run Mewtion
 
 Start the overlay natively on Wayland:
 
 ```bash
-cargo run --release
+cargo run --release --bin Mewtion
 ```
-
-Mewtion will automatically check whether a supported laptop accelerometer is available.
-
-### 3. Sensor Selection
-
-Mewtion prioritizes sensors in the following order:
-
-1. **Laptop accelerometer** — used automatically if detected.
-2. **Android phone** — used as a fallback if no compatible laptop accelerometer is available.
-
-If the laptop accelerometer is available, no phone connection is required.
-
-### 4. Android Fallback
-
-If your laptop does not have a compatible accelerometer, connect your Android phone using USB.
-
-Make sure **USB Debugging** is enabled and the device is authorized.
-
-Forward the sensor TCP port:
-
-```bash
-adb forward tcp:8765 tcp:8765
-```
-
-Open the **Mewtion Android companion app** on your phone.
-
-Keep the app in the foreground so Android does not terminate the sensor listener.
-
-The companion app reads the phone's linear acceleration and streams the sensor data to Mewtion through the ADB connection.
-
-### 5. Motion Cues
-
-Once a sensor is connected, the dots will appear along the edges of your screen.
-
-As the vehicle moves, the dots drift in the opposite direction of the detected acceleration, providing visual motion cues intended to reduce the sensory conflict that can cause motion sickness.
 
 ## Performance
 
@@ -95,27 +96,27 @@ Mewtion is designed around low-latency motion feedback and smooth rendering.
 
 Key goals include:
 
-- **60 FPS** particle rendering
-- Low-latency sensor processing
-- Native click-through overlay via Wayland Layer Shell
-- Minimal CPU and memory usage
-- Real-time acceleration response
-- Automatic sensor selection
-- Automatic fallback to an Android device when required
+* 60 FPS particle rendering
+* Low-latency sensor processing
+* Native click-through overlay via Wayland Layer Shell
+* Minimal CPU and memory usage
+* Real-time acceleration response
+* Automatic sensor selection
+* Automatic fallback to an Android device when required
 
 ## Future Enhancements
 
-- [x] **Wayland Native Support:** Add native Wayland support using Layer Shell protocols.
-- [ ] **Laptop Accelerometer Support:** Detect and use the laptop's built-in accelerometer when available, eliminating the need for a phone and USB connection.
-- [ ] **Automatic Sensor Fallback:** Automatically switch to the Android companion app when no compatible laptop accelerometer is detected.
-- [ ] **UI:** Add a graphical settings menu to customize dot size, opacity, margins, acceleration sensitivity, and animation behavior.
-- [ ] **Sensor Calibration:** Add automatic and manual calibration to account for device orientation and sensor bias.
-- [ ] **Sensor Fusion:** Combine accelerometer and gyroscope data for more accurate motion detection and smoother movement.
-- [ ] **BLE Support:** Implement Bluetooth Low Energy as an alternative to the USB connection.
-- [ ] **iOS Support:** Create an iOS companion app to broadcast sensor data.
-- [ ] **Windows Support:** Port the window management logic to the Windows API.
-- [ ] **Multi-Monitor Support:** Support motion cues across multiple displays.
-- [ ] **Adaptive Motion Sensitivity:** Automatically adjust dot movement based on the intensity of detected motion.
+* [x] **Wayland Native Support:** Add native Wayland support using Layer Shell protocols.
+* [ ] **Laptop Accelerometer Support:** Detect and use the laptop's built-in accelerometer when available, eliminating the need for a phone and USB connection.
+* [ ] **Automatic Sensor Fallback:** Automatically switch to the Android companion app when no compatible laptop accelerometer is detected.
+* [ ] **UI:** Add a graphical settings menu to customize dot size, opacity, margins, acceleration sensitivity, and animation behavior.
+* [ ] **Sensor Calibration:** Add automatic and manual calibration to account for device orientation and sensor bias.
+* [ ] **Sensor Fusion:** Combine accelerometer and gyroscope data for more accurate motion detection and smoother movement.
+* [ ] **BLE Support:** Implement Bluetooth Low Energy as an alternative to the USB connection.
+* [ ] **iOS Support:** Create an iOS companion app to broadcast sensor data.
+* [ ] **Windows Support:** Port the window management logic to the Windows API.
+* [ ] **Multi-Monitor Support:** Support motion cues across multiple displays.
+* [ ] **Adaptive Motion Sensitivity:** Automatically adjust dot movement based on the intensity of detected motion.
 
 ## Troubleshooting
 
@@ -129,10 +130,10 @@ If no compatible accelerometer is detected, connect an Android device and use th
 
 Check that:
 
-1. USB debugging is enabled.
-2. The phone is connected using a USB data cable.
-3. The device is authorized on the phone.
-4. ADB is installed and available in your terminal.
+* USB debugging is enabled.
+* The phone is connected using a USB data cable.
+* The device is authorized on the phone.
+* ADB is installed and available in your terminal.
 
 Check the connection with:
 
@@ -156,14 +157,14 @@ Contributions are welcome.
 
 You can contribute by:
 
-- Adding support for new sensor sources
-- Improving sensor processing
-- Optimizing the particle physics engine
-- Developing the Android or future iOS companion apps
-- Adding configuration options
-- Fixing bugs
-- Improving documentation
+* Adding support for new sensor sources
+* Improving sensor processing
+* Optimizing the particle physics engine
+* Developing the Android or future iOS companion apps
+* Adding configuration options
+* Fixing bugs
+* Improving documentation
 
 ## License
 
-This project is licensed under the **MIT License**.
+This project is licensed under the MIT License.
