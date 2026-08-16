@@ -1,4 +1,3 @@
-
 // Mewtion: Phase 7 -- Native Wayland (Layer Shell)
 //
 // Completely drops X11 legacy hacks. Uses native Wayland protocols to create
@@ -6,7 +5,9 @@
 // surface, Wayland cleanly passes all mouse clicks to the desktop below.
 
 mod tcp;
+mod config;
 
+use config::MewtionConfig;
 use gtk4::prelude::*;
 use gtk4::{glib, Application, ApplicationWindow, DrawingArea};
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
@@ -44,6 +45,8 @@ struct AppState {
     current_y: f64,
     particles: Vec<Particle>,
     rng: Rng,
+    config: MewtionConfig,
+    tick_count: u32,
 }
 
 // --- Main Application ---
@@ -60,22 +63,15 @@ fn build_ui(app: &Application) {
         .title("Mewtion")
         .build();
 
-    // 1. Initialize Wayland Layer Shell
     window.init_layer_shell();
-    
-    // Set to Overlay layer (Always on top of standard windows)
     window.set_layer(Layer::Overlay);
-    
-    // Don't push other windows out of the way
     window.set_exclusive_zone(-1); 
     
-    // Stretch to fill the entire screen
     window.set_anchor(Edge::Top, true);
     window.set_anchor(Edge::Bottom, true);
     window.set_anchor(Edge::Left, true);
     window.set_anchor(Edge::Right, true);
 
-    // 2. Make it transparent
     let css = gtk4::CssProvider::new();
     css.load_from_data("window { background: transparent; }");
     gtk4::style_context_add_provider_for_display(
@@ -84,15 +80,18 @@ fn build_ui(app: &Application) {
         gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
 
-    // 3. The Click-Through Magic (Native Wayland)
     window.connect_realize(|w| {
         if let Some(surface) = w.surface() {
-            // Create a 0x0 hit-box region. Wayland will instantly pass all 
-            // mouse clicks through this window to whatever is behind it!
             let empty_region = gtk4::cairo::Region::create();
             surface.set_input_region(Some(&empty_region));
         }
     });
+
+    let loaded_config = MewtionConfig::load();
+    println!(
+        "Mewtion Started: Size={:.1}px, Color={:?}", 
+        loaded_config.dot_size, loaded_config.color_rgb
+    );
 
     let state = Rc::new(RefCell::new(AppState {
         target_x: 0.0,
@@ -101,6 +100,8 @@ fn build_ui(app: &Application) {
         current_y: 0.0,
         particles: Vec::new(),
         rng: Rng::new(),
+        config: loaded_config,
+        tick_count: 0,
     }));
 
     let drawing_area = DrawingArea::new();
@@ -117,6 +118,8 @@ fn build_ui(app: &Application) {
             cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
             cr.paint().ok();
 
+            let (r, g, b) = s.config.color_rgb;
+
             for p in &s.particles {
                 let alpha = if p.is_anchor {
                     p.life 
@@ -124,8 +127,8 @@ fn build_ui(app: &Application) {
                     (p.life * std::f64::consts::PI).sin() * 0.75
                 }; 
 
-                cr.set_source_rgba(1.0, 1.0, 1.0, alpha);
-                cr.arc(p.nx * w, p.ny * h, p.size, 0.0, std::f64::consts::TAU);
+                cr.set_source_rgba(r, g, b, alpha);
+                cr.arc(p.nx * w, p.ny * h, p.size / 2.0, 0.0, std::f64::consts::TAU);
                 cr.fill().ok();
             }
         });
@@ -149,6 +152,12 @@ fn build_ui(app: &Application) {
     glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
         let mut s_guard = state_for_loop.borrow_mut();
         let s = &mut *s_guard;
+
+        // Hot Reload Logic
+        s.tick_count += 1;
+        if s.tick_count % 60 == 0 { 
+            s.config = MewtionConfig::load();
+        }
 
         while let Ok(sample) = receiver.try_recv() {
             s.target_x = (sample.x / ACCEL_SENSITIVITY).clamp(-1.0, 1.0) as f64;
@@ -180,7 +189,9 @@ fn build_ui(app: &Application) {
                     let ny = s.rng.next_f64();
                     
                     let random_fade = 0.005 + s.rng.next_f64() * 0.01;
-                    let random_size = 7.0 + s.rng.next_f64() * 3.0; 
+                    
+                    let base_size = s.config.dot_size;
+                    let random_size = (base_size * 0.9) + s.rng.next_f64() * (base_size * 0.2); 
 
                     s.particles.push(Particle {
                         nx, ny, life: 1.0, fade_rate: random_fade, size: random_size, is_anchor: false,
@@ -192,8 +203,10 @@ fn build_ui(app: &Application) {
             if anchor_count == 0 {
                 for i in 0..10 {
                     let ny = (i as f64 + 0.5) / 10.0;
-                    s.particles.push(Particle { nx: 0.03, ny, life: 0.0, fade_rate: 0.0, size: 8.0, is_anchor: true });
-                    s.particles.push(Particle { nx: 0.97, ny, life: 0.0, fade_rate: 0.0, size: 8.0, is_anchor: true });
+                    let base_size = s.config.dot_size;
+
+                    s.particles.push(Particle { nx: 0.03, ny, life: 0.0, fade_rate: 0.0, size: base_size, is_anchor: true });
+                    s.particles.push(Particle { nx: 0.97, ny, life: 0.0, fade_rate: 0.0, size: base_size, is_anchor: true });
                 }
             }
         }
