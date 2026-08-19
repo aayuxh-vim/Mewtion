@@ -1,2 +1,6 @@
 size=24
-color=#007aff
+color=#ff3b30
+opacity=1
+margin=0.03
+sensitivity=3.5
+animation=Fluid
