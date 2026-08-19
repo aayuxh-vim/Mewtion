@@ -110,7 +110,7 @@ Key goals include:
 * [ ] **Laptop Accelerometer Support:** Detect and use the laptop's built-in accelerometer when available, eliminating the need for a phone and USB connection.
 * [x] **UI:** Add a graphical settings menu to customize dot size, opacity, margins, acceleration sensitivity, and animation behavior.
 * [ ] **Sensor Calibration:** Add automatic and manual calibration to account for device orientation and sensor bias.
-* [ ] **Sensor Fusion:** Combine accelerometer and gyroscope data for more accurate motion detection and smoother movement.
+* [x] **Sensor Fusion:** Combine accelerometer and gyroscope data for more accurate motion detection and smoother movement.
 * [ ] **BLE Support:** Implement Bluetooth Low Energy as an alternative to the USB connection.
 * [ ] **iOS Support:** Create an iOS companion app to broadcast sensor data.
 * [ ] **Windows Support:** Port the window management logic to the Windows API.

@@ -1,11 +1,5 @@
-// Mewtion: Phase 7 -- Native Wayland (Layer Shell)
-//
-// Completely drops X11 legacy hacks. Uses native Wayland protocols to create
-// an always-on-top overlay. By setting an empty cairo input region on the 
-// surface, Wayland cleanly passes all mouse clicks to the desktop below.
-
-mod tcp;
 mod config;
+mod tcp;
 
 use config::MewtionConfig;
 use gtk4::prelude::*;
@@ -13,10 +7,9 @@ use gtk4::{glib, Application, ApplicationWindow, DrawingArea};
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
 use std::cell::RefCell;
 use std::rc::Rc;
+use tcp::MotionSample;
 
 const APP_ID: &str = "dev.mewtion.Overlay";
-
-// --- Particle System State ---
 
 struct Rng { state: u32 }
 impl Rng {
@@ -49,8 +42,6 @@ struct AppState {
     tick_count: u32,
 }
 
-// --- Main Application ---
-
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
@@ -65,7 +56,7 @@ fn build_ui(app: &Application) {
 
     window.init_layer_shell();
     window.set_layer(Layer::Overlay);
-    window.set_exclusive_zone(-1); 
+    window.set_exclusive_zone(-1);
     
     window.set_anchor(Edge::Top, true);
     window.set_anchor(Edge::Bottom, true);
@@ -88,11 +79,6 @@ fn build_ui(app: &Application) {
     });
 
     let loaded_config = MewtionConfig::load();
-    println!(
-        "Mewtion Started: Size={:.1}px, Color={:?}", 
-        loaded_config.dot_size, loaded_config.color_rgb
-    );
-
     let state = Rc::new(RefCell::new(AppState {
         target_x: 0.0,
         target_y: 0.0,
@@ -122,10 +108,10 @@ fn build_ui(app: &Application) {
 
             for p in &s.particles {
                 let alpha = if p.is_anchor {
-                    p.life 
+                    p.life
                 } else {
                     (p.life * std::f64::consts::PI).sin() * 0.75
-                }; 
+                };
 
                 cr.set_source_rgba(r, g, b, alpha);
                 cr.arc(p.nx * w, p.ny * h, p.size / 2.0, 0.0, std::f64::consts::TAU);
@@ -137,7 +123,7 @@ fn build_ui(app: &Application) {
     window.set_child(Some(&drawing_area));
     window.present();
 
-    let (sender, receiver) = std::sync::mpsc::channel::<tcp::AccelSample>();
+    let (sender, receiver) = std::sync::mpsc::channel::<MotionSample>();
 
     std::thread::spawn(move || {
         tcp::run_tcp_bridge_blocking(move |sample| {
@@ -147,34 +133,40 @@ fn build_ui(app: &Application) {
 
     let state_for_loop = state.clone();
     let drawing_area = drawing_area.clone();
-    const ACCEL_SENSITIVITY: f32 = 3.0;
+
+    const ACCEL_SENSITIVITY: f32 = 3.5;
+    const GYRO_YAW_WEIGHT: f32 = 0.8;
 
     glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
         let mut s_guard = state_for_loop.borrow_mut();
         let s = &mut *s_guard;
 
-        // Hot Reload Logic
         s.tick_count += 1;
-        if s.tick_count % 60 == 0 { 
+        if s.tick_count % 60 == 0 {
             s.config = MewtionConfig::load();
         }
 
         while let Ok(sample) = receiver.try_recv() {
-            s.target_x = (sample.x / ACCEL_SENSITIVITY).clamp(-1.0, 1.0) as f64;
-            s.target_y = (sample.y / ACCEL_SENSITIVITY).clamp(-1.0, 1.0) as f64;
+            // Sensor Fusion: Combine lateral linear acceleration with yaw rotation
+            let combined_lateral = (sample.ax / ACCEL_SENSITIVITY) + (sample.gz * GYRO_YAW_WEIGHT);
+            let combined_forward = sample.ay / ACCEL_SENSITIVITY;
+
+            s.target_x = (combined_lateral as f64).clamp(-1.0, 1.0);
+            s.target_y = (combined_forward as f64).clamp(-1.0, 1.0);
         }
 
-        s.current_x += (s.target_x - s.current_x) * 0.04;
-        s.current_y += (s.target_y - s.current_y) * 0.04;
+        // Smooth interpolation
+        s.current_x += (s.target_x - s.current_x) * 0.05;
+        s.current_y += (s.target_y - s.current_y) * 0.05;
 
         let speed = (s.current_x.powi(2) + s.current_y.powi(2)).sqrt();
-        let is_moving = speed > 0.025; 
+        let is_moving = speed > 0.02;
 
         if is_moving {
             for p in &mut s.particles {
                 if p.is_anchor {
                     p.is_anchor = false;
-                    p.life = 0.5; 
+                    p.life = 0.5;
                     p.fade_rate = 0.005 + s.rng.next_f64() * 0.01;
                 }
             }
@@ -189,9 +181,8 @@ fn build_ui(app: &Application) {
                     let ny = s.rng.next_f64();
                     
                     let random_fade = 0.005 + s.rng.next_f64() * 0.01;
-                    
                     let base_size = s.config.dot_size;
-                    let random_size = (base_size * 0.9) + s.rng.next_f64() * (base_size * 0.2); 
+                    let random_size = (base_size * 0.9) + s.rng.next_f64() * (base_size * 0.2);
 
                     s.particles.push(Particle {
                         nx, ny, life: 1.0, fade_rate: random_fade, size: random_size, is_anchor: false,
@@ -213,7 +204,7 @@ fn build_ui(app: &Application) {
 
         let cx = s.current_x;
         let cy = s.current_y;
-        
+
         for p in &mut s.particles {
             if p.is_anchor {
                 p.life += (0.75 - p.life) * 0.05;
@@ -223,7 +214,7 @@ fn build_ui(app: &Application) {
                 p.life -= p.fade_rate;
             }
         }
-        
+
         s.particles.retain(|p| p.life > 0.0 && p.nx > -0.1 && p.nx < 1.1 && p.ny > -0.1 && p.ny < 1.1);
         drawing_area.queue_draw();
 

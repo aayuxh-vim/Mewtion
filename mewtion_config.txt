@@ -1,2 +1,2 @@
 size=24
-color=#cc241d
+color=#007aff

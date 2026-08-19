@@ -1,28 +1,29 @@
 use iced::widget::{button, column, container, row, text, Container};
-use iced::{Alignment, Color, Element, Length, Task, Theme};
+use iced::{Alignment, Color, Element, Length, Task};
 use std::fs;
 
 pub fn main() -> iced::Result {
     iced::application(SettingsApp::default, SettingsApp::update, SettingsApp::view)
         .title("Mewtion Settings")
-        .window_size((350.0, 400.0))
+        .window_size((360.0, 420.0))
         .centered()
         .run()
 }
 
-// Strict Gruvbox Dark Palette
-const GB_BG0: Color = Color::from_rgb(0.157, 0.157, 0.157); // #282828
-const GB_BG2: Color = Color::from_rgb(0.314, 0.286, 0.271); // #504945
-const GB_FG: Color = Color::from_rgb(0.922, 0.859, 0.698);  // #ebdbb2
-const GB_GRAY: Color = Color::from_rgb(0.573, 0.514, 0.451); // #928374
+// Background UI Colors (Dark Neutral Frame)
+const UI_BG_MAIN: Color = Color::from_rgb(0.12, 0.12, 0.13); // #1f1f21
+const UI_BG_CARD: Color = Color::from_rgb(0.18, 0.18, 0.20); // #2e2e33
+const UI_FG_TEXT: Color = Color::from_rgb(0.95, 0.95, 0.96); // #f2f2f5
+const UI_FG_MUTED: Color = Color::from_rgb(0.60, 0.60, 0.64); // #9999a3
 
-const GB_RED: Color = Color::from_rgb(0.800, 0.141, 0.114);    // #cc241d
-const GB_GREEN: Color = Color::from_rgb(0.596, 0.592, 0.102);  // #98971a
-const GB_YELLOW: Color = Color::from_rgb(0.843, 0.600, 0.129); // #d79921
-const GB_BLUE: Color = Color::from_rgb(0.271, 0.522, 0.533);   // #458588
-const GB_PURPLE: Color = Color::from_rgb(0.694, 0.384, 0.525); // #b16286
-const GB_AQUA: Color = Color::from_rgb(0.408, 0.616, 0.416);   // #689d6a
-const GB_WHITE: Color = Color::from_rgb(0.659, 0.600, 0.518);  // #a89984
+// Vibrant Modern Dot Color Palette
+const COLOR_WHITE: Color  = Color::from_rgb(1.00, 1.00, 1.00); // #ffffff (Apple Default)
+const COLOR_BLUE: Color   = Color::from_rgb(0.00, 0.48, 1.00); // #007aff (iOS Blue)
+const COLOR_GREEN: Color  = Color::from_rgb(0.20, 0.78, 0.35); // #34c759 (Emerald)
+const COLOR_RED: Color    = Color::from_rgb(1.00, 0.23, 0.19); // #ff3b30 (Vivid Red)
+const COLOR_YELLOW: Color = Color::from_rgb(1.00, 0.80, 0.00); // #ffcc00 (Bright Gold)
+const COLOR_PURPLE: Color = Color::from_rgb(0.69, 0.32, 0.87); // #af52de (Neon Purple)
+const COLOR_CYAN: Color   = Color::from_rgb(0.00, 0.78, 0.75); // #00c7be (Cyan/Teal)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DotSize {
@@ -50,30 +51,37 @@ impl DotSize {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DotColor {
-    Red, Green, Yellow, Blue, Purple, Aqua, White,
+    White,
+    Blue,
+    Green,
+    Red,
+    Yellow,
+    Purple,
+    Cyan,
 }
 
 impl DotColor {
     fn to_color(&self) -> Color {
         match self {
-            DotColor::Red => GB_RED,
-            DotColor::Green => GB_GREEN,
-            DotColor::Yellow => GB_YELLOW,
-            DotColor::Blue => GB_BLUE,
-            DotColor::Purple => GB_PURPLE,
-            DotColor::Aqua => GB_AQUA,
-            DotColor::White => GB_WHITE,
+            DotColor::White => COLOR_WHITE,
+            DotColor::Blue => COLOR_BLUE,
+            DotColor::Green => COLOR_GREEN,
+            DotColor::Red => COLOR_RED,
+            DotColor::Yellow => COLOR_YELLOW,
+            DotColor::Purple => COLOR_PURPLE,
+            DotColor::Cyan => COLOR_CYAN,
         }
     }
+
     fn hex_string(&self) -> &'static str {
         match self {
-            DotColor::Red => "#cc241d",
-            DotColor::Green => "#98971a",
-            DotColor::Yellow => "#d79921",
-            DotColor::Blue => "#458588",
-            DotColor::Purple => "#b16286",
-            DotColor::Aqua => "#689d6a",
-            DotColor::White => "#a89984",
+            DotColor::White => "#ffffff",
+            DotColor::Blue => "#007aff",
+            DotColor::Green => "#34c759",
+            DotColor::Red => "#ff3b30",
+            DotColor::Yellow => "#ffcc00",
+            DotColor::Purple => "#af52de",
+            DotColor::Cyan => "#00c7be",
         }
     }
 }
@@ -88,7 +96,7 @@ impl Default for SettingsApp {
     fn default() -> Self {
         Self {
             selected_size: DotSize::Medium,
-            selected_color: DotColor::Green,
+            selected_color: DotColor::White,
             status_message: String::new(),
         }
     }
@@ -112,7 +120,7 @@ impl SettingsApp {
                     self.selected_size.pixels(),
                     self.selected_color.hex_string()
                 );
-                
+
                 match fs::write("mewtion_config.txt", config_data) {
                     Ok(_) => self.status_message = "Saved to mewtion_config.txt".to_string(),
                     Err(_) => self.status_message = "Error saving config".to_string(),
@@ -123,11 +131,11 @@ impl SettingsApp {
     }
 
     fn view(&self) -> Element<Message> {
-        let title = text("Mewtion Configuration")
-            .size(22)
-            .color(GB_FG)
-            .style(|_| text::Style { ..Default::default() });
+        let title = text("Mewtion Settings")
+            .size(20)
+            .color(UI_FG_TEXT);
 
+        // Preview box
         let preview_size = self.selected_size.pixels();
         let preview_dot = container(text(""))
             .width(Length::Fixed(preview_size))
@@ -143,11 +151,11 @@ impl SettingsApp {
 
         let preview_area = container(preview_dot)
             .width(Length::Fill)
-            .height(Length::Fixed(60.0))
+            .height(Length::Fixed(70.0))
             .center_x(Length::Fill)
             .center_y(Length::Fill)
             .style(|_| container::Style {
-                background: Some(GB_BG2.into()),
+                background: Some(UI_BG_CARD.into()),
                 border: iced::Border {
                     radius: 8.0.into(),
                     ..Default::default()
@@ -155,6 +163,7 @@ impl SettingsApp {
                 ..Default::default()
             });
 
+        // Size toggles
         let sizes_row = row![
             self.size_button(DotSize::Small),
             self.size_button(DotSize::Medium),
@@ -162,57 +171,66 @@ impl SettingsApp {
         ]
         .spacing(10);
 
+        // Color swatches
         let colors_row = row![
-            self.color_button(DotColor::Red),
-            self.color_button(DotColor::Green),
-            self.color_button(DotColor::Yellow),
-            self.color_button(DotColor::Blue),
-            self.color_button(DotColor::Purple),
-            self.color_button(DotColor::Aqua),
             self.color_button(DotColor::White),
+            self.color_button(DotColor::Blue),
+            self.color_button(DotColor::Green),
+            self.color_button(DotColor::Red),
+            self.color_button(DotColor::Yellow),
+            self.color_button(DotColor::Purple),
+            self.color_button(DotColor::Cyan),
         ]
-        .spacing(8);
+        .spacing(10);
 
+        // Apply Button
         let save_btn = button(
             text("Save & Apply")
-                .color(GB_BG0)
+                .color(Color::WHITE)
                 .width(Length::Fill)
-                .align_x(Alignment::Center)
+                .align_x(Alignment::Center),
         )
         .on_press(Message::SaveClicked)
         .padding(12)
         .style(|_theme, status| button::Style {
             background: Some(
-                if status == button::Status::Hovered { GB_YELLOW.into() } else { GB_GREEN.into() }
+                if status == button::Status::Hovered {
+                    Color::from_rgb(0.05, 0.55, 1.00).into()
+                } else {
+                    COLOR_BLUE.into()
+                },
             ),
-            border: iced::Border { radius: 6.0.into(), ..Default::default() },
+            border: iced::Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
             ..Default::default()
         });
 
-        let status = text(&self.status_message).size(12).color(GB_GRAY);
+        let status = text(&self.status_message).size(12).color(COLOR_GREEN);
 
         let content = column![
             title,
-            text("Live Preview").size(14).color(GB_GRAY),
+            text("Live Preview").size(13).color(UI_FG_MUTED),
             preview_area,
-            text("Dot Size").size(14).color(GB_GRAY),
+            text("Dot Size").size(13).color(UI_FG_MUTED),
             sizes_row,
-            text("Theme Color").size(14).color(GB_GRAY),
+            text("Dot Color").size(13).color(UI_FG_MUTED),
             colors_row,
             save_btn,
             status,
         ]
-        .spacing(15)
-        .padding(25)
-        .max_width(350);
+        .spacing(14)
+        .padding(24)
+        .max_width(360);
 
         container(content)
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)
             .style(|_| container::Style {
-                background: Some(GB_BG0.into()),
-                text_color: Some(GB_FG),
+                background: Some(UI_BG_MAIN.into()),
+                text_color: Some(UI_FG_TEXT),
                 ..Default::default()
             })
             .into()
@@ -220,19 +238,23 @@ impl SettingsApp {
 
     fn size_button(&self, size: DotSize) -> Element<Message> {
         let is_selected = self.selected_size == size;
-        button(text(size.label()).color(if is_selected { GB_BG0 } else { GB_FG }))
+        button(text(size.label()).color(if is_selected { Color::WHITE } else { UI_FG_TEXT }))
             .on_press(Message::SizeSelected(size))
             .padding([8, 16])
             .style(move |_theme, status| button::Style {
                 background: Some(
-                    if is_selected { GB_GRAY.into() } 
-                    else if status == button::Status::Hovered { GB_BG2.into() } 
-                    else { GB_BG0.into() }
+                    if is_selected {
+                        COLOR_BLUE.into()
+                    } else if status == button::Status::Hovered {
+                        UI_BG_CARD.into()
+                    } else {
+                        UI_BG_MAIN.into()
+                    },
                 ),
                 border: iced::Border {
-                    radius: 4.0.into(),
+                    radius: 6.0.into(),
                     width: 1.0,
-                    color: if is_selected { GB_GRAY } else { GB_BG2 },
+                    color: if is_selected { COLOR_BLUE } else { UI_BG_CARD },
                 },
                 ..Default::default()
             })
@@ -242,17 +264,17 @@ impl SettingsApp {
     fn color_button(&self, color: DotColor) -> Element<Message> {
         let is_selected = self.selected_color == color;
         let c = color.to_color();
-        
+
         button(text(""))
             .on_press(Message::ColorSelected(color))
-            .width(Length::Fixed(24.0))
-            .height(Length::Fixed(24.0))
+            .width(Length::Fixed(26.0))
+            .height(Length::Fixed(26.0))
             .style(move |_theme, _status| button::Style {
                 background: Some(c.into()),
                 border: iced::Border {
-                    radius: 12.0.into(),
+                    radius: 13.0.into(),
                     width: if is_selected { 3.0 } else { 0.0 },
-                    color: GB_FG,
+                    color: Color::WHITE,
                 },
                 ..Default::default()
             })
