@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Mewtion
+Comment=Vehicle motion cues overlay to reduce motion sickness
+Exec=mewtion
+Icon=dev.mewtion.Overlay
+Terminal=false
+Type=Application
+Categories=Utility;Accessibility;GTK;
+Keywords=motion;sickness;cues;overlay;wayland;accelerometer;
+StartupNotify=false

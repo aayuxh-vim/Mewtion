@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build-and-release:
-    name: Build & Release Linux x86_64
+    name: Build & Release Multi-Format Packages
     runs-on: ubuntu-22.04
 
     steps:
@@ -24,7 +24,7 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Install system dependencies
+      - name: Install system build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -38,7 +38,9 @@ jobs:
             librsvg2-dev \
             libvulkan-dev \
             gobject-introspection \
-            valac
+            valac \
+            wget \
+            file
 
       - name: Build & Install gtk4-layer-shell
         run: |
@@ -52,45 +54,168 @@ jobs:
       - name: Build release binaries
         run: cargo build --release
 
-      - name: Assemble Release Package
+      - name: Package Portable Tarball (.tar.gz)
         run: |
           VERSION="${GITHUB_REF_NAME:-v0.1.0}"
           PKG_NAME="mewtion-${VERSION}-linux-x86_64"
           mkdir -p "dist/${PKG_NAME}/bin"
           mkdir -p "dist/${PKG_NAME}/lib"
+          mkdir -p "dist/${PKG_NAME}/assets"
 
           # Copy compiled binaries
           cp target/release/Mewtion "dist/${PKG_NAME}/bin/"
           cp target/release/control_panel "dist/${PKG_NAME}/bin/"
 
-          # Bundle gtk4-layer-shell shared library for end-users
+          # Bundle gtk4-layer-shell shared library
           cp -d /usr/lib/libgtk4-layer-shell.so* "dist/${PKG_NAME}/lib/" 2>/dev/null || \
           cp -d /usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so* "dist/${PKG_NAME}/lib/" 2>/dev/null || \
           cp -d /usr/local/lib/libgtk4-layer-shell.so* "dist/${PKG_NAME}/lib/" 2>/dev/null || true
 
-          # Copy configs, docs, and launcher
+          # Copy configs, docs, launcher, and assets
           cp mewtion_config.txt "dist/${PKG_NAME}/"
           cp LICENSE "dist/${PKG_NAME}/"
           cp README.md "dist/${PKG_NAME}/"
           cp start.sh "dist/${PKG_NAME}/"
+          cp assets/* "dist/${PKG_NAME}/assets/" 2>/dev/null || true
 
           chmod +x "dist/${PKG_NAME}/start.sh" "dist/${PKG_NAME}/bin/"*
 
-          # Create compressed archive
           tar -czvf "${PKG_NAME}.tar.gz" -C dist "${PKG_NAME}"
-          echo "ARCHIVE_NAME=${PKG_NAME}.tar.gz" >> $GITHUB_ENV
 
-      - name: Upload artifact for manual workflow runs
+      - name: Package Debian (.deb)
+        run: |
+          RAW_VER="${GITHUB_REF_NAME:-0.1.0}"
+          DEB_VER="${RAW_VER#v}"
+          DEB_DIR="deb_pkg/mewtion_${DEB_VER}_amd64"
+
+          mkdir -p "${DEB_DIR}/DEBIAN"
+          mkdir -p "${DEB_DIR}/usr/bin"
+          mkdir -p "${DEB_DIR}/usr/lib/mewtion"
+          mkdir -p "${DEB_DIR}/usr/share/applications"
+          mkdir -p "${DEB_DIR}/usr/share/icons/hicolor/scalable/apps"
+          mkdir -p "${DEB_DIR}/usr/share/doc/mewtion"
+          mkdir -p "${DEB_DIR}/etc/mewtion"
+
+          # Debian package control file
+          cat << EOF > "${DEB_DIR}/DEBIAN/control"
+Package: mewtion
+Version: ${DEB_VER}
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Mewtion <https://github.com/aayuxh-vim/Mewtion>
+Depends: libc6, libgtk-4-1
+Description: Vehicle motion cues overlay to reduce motion sickness
+ Mewtion creates a transparent, click-through overlay of dots along
+ screen edges driven by accelerometer data to reduce motion sickness.
+EOF
+          chmod 755 "${DEB_DIR}/DEBIAN"
+          chmod 644 "${DEB_DIR}/DEBIAN/control"
+
+          # Binaries & bundled libraries
+          cp target/release/Mewtion "${DEB_DIR}/usr/lib/mewtion/"
+          cp target/release/control_panel "${DEB_DIR}/usr/lib/mewtion/"
+          cp -d /usr/lib/libgtk4-layer-shell.so* "${DEB_DIR}/usr/lib/mewtion/" 2>/dev/null || \
+          cp -d /usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so* "${DEB_DIR}/usr/lib/mewtion/" 2>/dev/null || \
+          cp -d /usr/local/lib/libgtk4-layer-shell.so* "${DEB_DIR}/usr/lib/mewtion/" 2>/dev/null || true
+
+          # System-wide launcher script (/usr/bin/mewtion)
+          cat << 'EOF' > "${DEB_DIR}/usr/bin/mewtion"
+#!/usr/bin/env bash
+export LD_LIBRARY_PATH="/usr/lib/mewtion:${LD_LIBRARY_PATH:-}"
+
+if command -v adb &>/dev/null && adb devices | grep -qw "device"; then
+  adb forward tcp:8765 tcp:8765 2>/dev/null || true
+fi
+
+/usr/lib/mewtion/control_panel &
+CP_PID=$!
+/usr/lib/mewtion/Mewtion &
+MW_PID=$!
+
+trap "kill $CP_PID $MW_PID 2>/dev/null" EXIT INT TERM
+wait
+EOF
+
+          chmod 755 "${DEB_DIR}/usr/bin/mewtion"
+          chmod 755 "${DEB_DIR}/usr/lib/mewtion/Mewtion" "${DEB_DIR}/usr/lib/mewtion/control_panel"
+
+          # Desktop entry, icon, and docs
+          cp assets/dev.mewtion.Overlay.desktop "${DEB_DIR}/usr/share/applications/"
+          cp assets/dev.mewtion.Overlay.svg "${DEB_DIR}/usr/share/icons/hicolor/scalable/apps/"
+          cp mewtion_config.txt "${DEB_DIR}/etc/mewtion/"
+          cp README.md "${DEB_DIR}/usr/share/doc/mewtion/"
+          cp LICENSE "${DEB_DIR}/usr/share/doc/mewtion/copyright"
+
+          # Build Debian package
+          dpkg-deb --build --root-owner-group "${DEB_DIR}" "mewtion_${DEB_VER}_amd64.deb"
+
+      - name: Package Universal AppImage (.AppImage)
+        run: |
+          VERSION="${GITHUB_REF_NAME:-v0.1.0}"
+          APPDIR="AppDir"
+          mkdir -p "${APPDIR}/usr/bin"
+          mkdir -p "${APPDIR}/usr/lib"
+          mkdir -p "${APPDIR}/usr/share/icons/hicolor/scalable/apps"
+
+          # Copy binaries and bundled libraries
+          cp target/release/Mewtion "${APPDIR}/usr/bin/"
+          cp target/release/control_panel "${APPDIR}/usr/bin/"
+          cp -d /usr/lib/libgtk4-layer-shell.so* "${APPDIR}/usr/lib/" 2>/dev/null || \
+          cp -d /usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so* "${APPDIR}/usr/lib/" 2>/dev/null || \
+          cp -d /usr/local/lib/libgtk4-layer-shell.so* "${APPDIR}/usr/lib/" 2>/dev/null || true
+
+          # Desktop file and Icon
+          cp assets/dev.mewtion.Overlay.desktop "${APPDIR}/"
+          cp assets/dev.mewtion.Overlay.svg "${APPDIR}/"
+          cp assets/dev.mewtion.Overlay.svg "${APPDIR}/.DirIcon"
+          cp assets/dev.mewtion.Overlay.svg "${APPDIR}/usr/share/icons/hicolor/scalable/apps/"
+          cp mewtion_config.txt "${APPDIR}/"
+
+          # AppRun launcher script
+          cat << 'EOF' > "${APPDIR}/AppRun"
+#!/usr/bin/env bash
+HERE="$(dirname "$(readlink -f "${0}")")"
+export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH:-}"
+export PATH="${HERE}/usr/bin:${PATH:-}"
+
+if command -v adb &>/dev/null && adb devices | grep -qw "device"; then
+  adb forward tcp:8765 tcp:8765 2>/dev/null || true
+fi
+
+"${HERE}/usr/bin/control_panel" &
+CP_PID=$!
+"${HERE}/usr/bin/Mewtion" &
+MW_PID=$!
+
+trap "kill $CP_PID $MW_PID 2>/dev/null" EXIT INT TERM
+wait
+EOF
+          chmod +x "${APPDIR}/AppRun" "${APPDIR}/usr/bin/"*
+
+          # Extract appimagetool to bypass runner FUSE restrictions
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool.AppImage
+          chmod +x /tmp/appimagetool.AppImage
+          /tmp/appimagetool.AppImage --appimage-extract
+          ARCH=x86_64 ./squashfs-root/AppRun "${APPDIR}" "Mewtion-${VERSION}-x86_64.AppImage"
+
+      - name: Upload artifacts for workflow runs
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ARCHIVE_NAME }}
-          path: ${{ env.ARCHIVE_NAME }}
+          name: mewtion-packages
+          path: |
+            mewtion-*.tar.gz
+            mewtion_*.deb
+            Mewtion-*.AppImage
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: ${{ env.ARCHIVE_NAME }}
+          files: |
+            mewtion-*.tar.gz
+            mewtion_*.deb
+            Mewtion-*.AppImage
           name: Mewtion ${{ github.ref_name }}
           generate_release_notes: true
           draft: false

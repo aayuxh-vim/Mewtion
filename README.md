@@ -26,50 +26,79 @@ The system consists of three parts working together for ultra-low latency:
 >
 > The overlay uses the Wayland Layer Shell protocol, making it natively compatible with modern Wayland compositors like KDE Plasma, Sway, and Hyprland.
 
-## Prerequisites
+## Installation & Quick Start
 
-* Linux desktop environment with a **Wayland compositor supporting Layer Shell**
-* **Rust / Cargo**
-* A laptop with a built-in accelerometer exposed through IIO — check with `ls /sys/bus/iio/devices/`. Nothing else is required in this case; the remaining prerequisites apply only to the Android fallback.
-* **ADB (Android Debug Bridge)** for the Android fallback
+You can either install pre-built binaries (recommended, no Rust/Cargo required) or compile from source.
 
-  * On Arch Linux:
+### 1. Pre-built Packages (1-Click Run)
 
+Pre-compiled packages for Linux `x86_64` are available on the **[Releases](https://github.com/aayuxh-vim/Mewtion/releases)** page.
+
+#### Option A: Universal AppImage (Recommended)
+Works out of the box on almost any Linux distribution (Ubuntu, Fedora, Arch, openSUSE, Debian) without installing anything:
+```bash
+# 1. Make the AppImage executable
+chmod +x Mewtion-*-x86_64.AppImage
+
+# 2. Run it!
+./Mewtion-*-x86_64.AppImage
+```
+
+#### Option B: Debian / Ubuntu Package (`.deb`)
+Installs Mewtion as a system application and adds it directly to your system application drawer / start menu:
+```bash
+sudo apt install ./mewtion_*_amd64.deb
+```
+Launch it anytime from your application menu or by running `mewtion` in your terminal.
+
+#### Option C: Portable Tarball (`.tar.gz`)
+Standalone archive with bundled libraries and a portable launcher script:
+```bash
+tar -xvf mewtion-*-linux-x86_64.tar.gz
+cd mewtion-*-linux-x86_64
+./start.sh
+```
+
+#### Option D: Nix Flake
+If you use Nix or NixOS, you can run Mewtion directly without installation:
+```bash
+nix run github:aayuxh-vim/Mewtion
+```
+
+---
+
+### 2. Building from Source (Self-Build / Developers)
+
+#### System Prerequisites
+
+* Linux desktop environment with a **Wayland compositor supporting Layer Shell** (e.g. Sway, Hyprland, KDE Plasma 6)
+* **Rust & Cargo** (installed via [rustup.rs](https://rustup.rs))
+* **GTK4** and **GTK4 Layer Shell** development libraries:
+  * **Arch Linux / Manjaro:**
     ```bash
-    sudo pacman -S android-tools
+    sudo pacman -S gtk4 gtk4-layer-shell base-devel
     ```
-* An Android device running the **[Mewtion-Android](https://github.com/aayuxh-vim/Mewtion-Android)** companion app with **USB Debugging** enabled
+  * **Ubuntu / Debian:**
+    ```bash
+    sudo apt install pkg-config meson ninja-build valac libgtk-4-dev libwayland-dev wayland-protocols libxkbcommon-dev librsvg2-dev
+    # Build gtk4-layer-shell from source (if not in distro repositories):
+    git clone https://github.com/wmww/gtk4-layer-shell.git /tmp/gtk4-layer-shell
+    cd /tmp/gtk4-layer-shell && meson setup build --prefix=/usr && ninja -C build && sudo ninja -C build install
+    ```
+* **Sensor Input:**
+  * Built-in laptop accelerometer: detected automatically via `/sys/bus/iio/devices/`.
+  * *Or* Android phone fallback: requires **ADB (`android-tools`)** and the **[Mewtion-Android](https://github.com/aayuxh-vim/Mewtion-Android)** companion app with USB Debugging enabled.
 
-## Usage & Automation
+#### Build & Run
 
-### Quick Start (Using the Shell Script)
+**Automated (recommended for dev):**
+```bash
+chmod +x run.sh
+./run.sh
+```
+This script checks for ADB devices, forwards the network port if plugged in, compiles release binaries, and launches both the control panel and overlay.
 
-We provide an automated `run.sh` script that checks for your connected Android device, sets up ADB port forwarding automatically (if plugged in), and launches both the GUI Control Panel and the Mewtion overlay.
-
-1. Make sure the script is executable (first time only):
-
-   ```bash
-   chmod +x run.sh
-   ```
-
-2. Run everything in one go:
-
-   ```bash
-   ./run.sh
-   ```
-
-### Connection Modes & Manual Setup
-
-Once the Control Panel opens, you can select how you want to connect to your phone:
-
-- **Mobile Hotspot Mode:** Connect your laptop to your phone's Wi-Fi hotspot. Click the **"Auto-Detect Hotspot"** button in the Control Panel to automatically find and connect to your phone's IP address.
-- **Wi-Fi Network Mode:** Connect both devices to the same Wi-Fi router. Enter your phone's IP address into the Control Panel and click **"Save & Apply"**.
-- **USB Mode:** Connect your phone via USB with USB Debugging enabled. Click **"USB Mode"** in the Control Panel (defaults to `127.0.0.1`).
-
-#### Manual Build Execution
-
-If you prefer not to use the script, you can build and run the components manually:
-
+**Manual Cargo Commands:**
 ```bash
 cargo build --release
 cargo run --release --bin control_panel &
