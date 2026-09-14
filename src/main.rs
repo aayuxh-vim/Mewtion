@@ -1,14 +1,18 @@
 mod config;
+mod dotview;
+mod iio;
+mod sensor;
 mod tcp;
 
 use config::MewtionConfig;
+use dotview::DotView;
 use gtk4::prelude::*;
-use gtk4::{glib, Application, ApplicationWindow, DrawingArea};
+use gtk4::{glib, Application, ApplicationWindow};
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
+use sensor::MotionSample;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use tcp::MotionSample;
 
 const APP_ID: &str = "dev.mewtion.Overlay";
 
@@ -72,44 +76,31 @@ fn build_ui(app: &Application) {
         particles: Vec::new(), rng: Rng::new(), config: loaded_config, tick_count: 0,
     }));
 
-    let drawing_area = DrawingArea::new();
+    let drawing_area = DotView::default();
     drawing_area.set_hexpand(true);
     drawing_area.set_vexpand(true);
-
-    {
-        let state = state.clone();
-        drawing_area.set_draw_func(move |_area, cr, width, height| {
-            let s = state.borrow();
-            let w = width as f64;
-            let h = height as f64;
-
-            cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
-            cr.paint().ok();
-
-            let (r, g, b) = s.config.color_rgb;
-
-            for p in &s.particles {
-                let mut alpha = if p.is_anchor { p.life } else { (p.life * std::f64::consts::PI).sin() * 0.75 };
-                alpha *= s.config.opacity;
-
-                cr.set_source_rgba(r, g, b, alpha);
-                cr.arc(p.nx * w, p.ny * h, p.size / 2.0, 0.0, std::f64::consts::TAU);
-                cr.fill().ok();
-            }
-        });
-    }
 
     window.set_child(Some(&drawing_area));
     window.present();
 
     let (sender, receiver) = std::sync::mpsc::channel::<MotionSample>();
 
-    // Pass the thread-safe IP string reference to the TCP module
     let tcp_shared_ip = shared_ip.clone();
-    std::thread::spawn(move || {
-        tcp::run_tcp_bridge_blocking(tcp_shared_ip, move |sample| {
-            let _ = sender.send(sample);
-        });
+    // Prefer the machine's own sensors; fall back to a companion app over TCP
+    // when there are none.
+    std::thread::spawn(move || match iio::IioSource::discover() {
+        Some(source) => {
+            println!("Mewtion: using built-in sensors ({})", source.describe());
+            iio::run_iio_source_blocking(source, move |sample| {
+                let _ = sender.send(sample);
+            });
+        }
+        None => {
+            println!("Mewtion: no built-in accelerometer found, waiting for a companion app over TCP");
+            tcp::run_tcp_bridge_blocking(tcp_shared_ip, move |sample| {
+                let _ = sender.send(sample);
+            });
+        }
     });
 
     let state_for_loop = state.clone();
@@ -210,8 +201,40 @@ fn build_ui(app: &Application) {
             }
         }
 
-        s.particles.retain(|p| p.life > 0.0 && p.nx > -0.1 && p.nx < 1.1 && p.ny > -0.1 && p.ny < 1.1);
-        drawing_area.queue_draw();
+        s.particles.retain(|p| {
+            p.life > 0.0 && p.nx > -0.1 && p.nx < 1.1 && p.ny > -0.1 && p.ny < 1.1
+        });
+
+        // Project the particles into widget pixels for the canvas to draw.
+        let width = WidgetExt::width(&drawing_area) as f64;
+        let height = WidgetExt::height(&drawing_area) as f64;
+        if width <= 0.0 || height <= 0.0 {
+            // Not allocated yet; positions would all collapse onto the origin.
+            return glib::ControlFlow::Continue;
+        }
+        let opacity = s.config.opacity;
+        let (r, g, b) = s.config.color_rgb;
+
+        let dots = s
+            .particles
+            .iter()
+            .map(|p| {
+                let alpha = if p.is_anchor {
+                    p.life
+                } else {
+                    (p.life * std::f64::consts::PI).sin() * 0.75
+                };
+                (
+                    (p.nx * width) as f32,
+                    (p.ny * height) as f32,
+                    p.size as f32,
+                    (alpha * opacity) as f32,
+                )
+            })
+            .collect();
+
+        drop(s_guard);
+        drawing_area.set_dots((r as f32, g as f32, b as f32), dots);
 
         glib::ControlFlow::Continue
     });
