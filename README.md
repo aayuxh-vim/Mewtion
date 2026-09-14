@@ -135,21 +135,21 @@ If no compatible accelerometer is detected, connect an Android device and use th
 
 ### Motion feels choppy or lags behind the vehicle
 
-Mewtion prints the accelerometer's rate at startup. On a HID sensor hub that rate bounds everything, because the hub answers each `*_raw` read by fetching a fresh report, costing about one sampling period per axis. An accelerometer parked at 10 Hz therefore yields roughly 5 Hz of motion updates. Dedicated I2C accelerometers return immediately and are not affected.
+Mewtion prints the accelerometer's rate at startup. A HID sensor hub answers each `*_raw` read by fetching a fresh report, costing about one sampling period per axis. An accelerometer parked at 10 Hz therefore yields roughly 5 Hz of motion updates, while raising it to 100 Hz gives about 50 Hz. Dedicated I2C accelerometers return a cached value immediately and are not affected.
 
-Sensor hubs commonly idle at 10 Hz. Mewtion asks for a faster rate at startup, but the attribute is usually root-owned, so the request is skipped for a normal user. Check the current rate:
+Check the current rate:
 
 ```bash
 cat /sys/bus/iio/devices/iio:device*/in_accel_sampling_frequency
 ```
 
-To grant write access, add a udev rule such as `/etc/udev/rules.d/99-iio-sampling.rules`:
+Mewtion asks for a faster rate at startup, but the attribute is root-owned, so the request is skipped when running as a normal user. The simplest fix is to let udev set it, since udev rules run as root. Create `/etc/udev/rules.d/99-iio-sampling.rules`:
 
 ```
-SUBSYSTEM=="iio", KERNEL=="iio:device*", RUN+="/bin/chgrp input /sys%p/in_accel_sampling_frequency", RUN+="/bin/chmod g+w /sys%p/in_accel_sampling_frequency"
+SUBSYSTEM=="iio", KERNEL=="iio:device*", ATTR{in_accel_sampling_frequency}="100"
 ```
 
-Reload with `sudo udevadm control --reload && sudo udevadm trigger`, and make sure your user is in the `input` group. Raising a 10 Hz accelerometer to 100 Hz takes motion updates from about 5 Hz to 50 Hz.
+Apply it with `sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=iio`. Re-triggering can renumber `iio:deviceN`, which is why Mewtion identifies sensors by the channels they expose rather than by device number.
 
 ### ADB cannot detect the phone
 
