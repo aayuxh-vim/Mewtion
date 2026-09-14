@@ -1,13 +1,15 @@
 mod config;
+mod iio;
+mod sensor;
 mod tcp;
 
 use config::MewtionConfig;
 use gtk4::prelude::*;
 use gtk4::{glib, Application, ApplicationWindow, DrawingArea};
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
+use sensor::MotionSample;
 use std::cell::RefCell;
 use std::rc::Rc;
-use tcp::MotionSample;
 
 const APP_ID: &str = "dev.mewtion.Overlay";
 
@@ -146,10 +148,21 @@ fn build_ui(app: &Application) {
 
     let (sender, receiver) = std::sync::mpsc::channel::<MotionSample>();
 
-    std::thread::spawn(move || {
-        tcp::run_tcp_bridge_blocking(move |sample| {
-            let _ = sender.send(sample);
-        });
+    // Prefer the machine's own sensors; fall back to a companion app over TCP
+    // when there are none.
+    std::thread::spawn(move || match iio::IioSource::discover() {
+        Some(source) => {
+            println!("Mewtion: using built-in sensors ({})", source.describe());
+            iio::run_iio_source_blocking(source, move |sample| {
+                let _ = sender.send(sample);
+            });
+        }
+        None => {
+            println!("Mewtion: no built-in accelerometer found, waiting for a companion app on 127.0.0.1:8765");
+            tcp::run_tcp_bridge_blocking(move |sample| {
+                let _ = sender.send(sample);
+            });
+        }
     });
 
     let state_for_loop = state.clone();

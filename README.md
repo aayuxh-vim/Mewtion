@@ -10,7 +10,9 @@ The system consists of three parts working together for ultra-low latency:
 
 1. **Sensor (Laptop / Android)**
 
-   Mewtion first attempts to detect and use the laptop's built-in accelerometer. If a compatible accelerometer is not available, it falls back to an Android companion app that reads gravity-filtered linear acceleration using `TYPE_LINEAR_ACCELERATION`.
+   Mewtion first attempts to detect and use the laptop's built-in accelerometer, read directly from the kernel's **IIO** interface (`/sys/bus/iio/devices/`). This covers both dedicated accelerometer drivers and laptops whose sensors arrive through the HID sensor hub, and needs no phone, cable or extra daemon. If a compatible accelerometer is not available, it falls back to an Android companion app that reads gravity-filtered linear acceleration using `TYPE_LINEAR_ACCELERATION`.
+
+   The overlay is driven by linear acceleration. Where the hardware publishes its own `gravity` channel, Mewtion subtracts it; otherwise gravity is tracked with a low-pass filter and subtracted, mirroring how Android derives `TYPE_LINEAR_ACCELERATION`.
 
 2. **Tunnel (ADB)**
 
@@ -28,6 +30,7 @@ The system consists of three parts working together for ultra-low latency:
 
 * Linux desktop environment with a **Wayland compositor supporting Layer Shell**
 * **Rust / Cargo**
+* A laptop with a built-in accelerometer exposed through IIO — check with `ls /sys/bus/iio/devices/`. Nothing else is required in this case; the remaining prerequisites apply only to the Android fallback.
 * **ADB (Android Debug Bridge)** for the Android fallback
 
   * On Arch Linux:
@@ -36,7 +39,6 @@ The system consists of three parts working together for ultra-low latency:
     sudo pacman -S android-tools
     ```
 * An Android device running the **[Mewtion-Android](https://github.com/aayuxh-vim/Mewtion-Android)** companion app with **USB Debugging** enabled
-* A laptop with a supported accelerometer for laptop-based sensor input
 
 ## Usage & Automation
 
@@ -107,7 +109,7 @@ Key goals include:
 ## Future Enhancements
 
 * [x] **Wayland Native Support:** Add native Wayland support using Layer Shell protocols.
-* [ ] **Laptop Accelerometer Support:** Detect and use the laptop's built-in accelerometer when available, eliminating the need for a phone and USB connection.
+* [x] **Laptop Accelerometer Support:** Detect and use the laptop's built-in accelerometer when available, eliminating the need for a phone and USB connection.
 * [x] **UI:** Add a graphical settings menu to customize dot size, opacity, margins, acceleration sensitivity, and animation behavior.
 * [ ] **Sensor Calibration:** Add automatic and manual calibration to account for device orientation and sensor bias.
 * [x] **Sensor Fusion:** Combine accelerometer and gyroscope data for more accurate motion detection and smoother movement.
@@ -121,9 +123,33 @@ Key goals include:
 
 ### Mewtion does not detect the laptop accelerometer
 
-Make sure your laptop exposes its accelerometer through a Linux-supported sensor interface.
+Mewtion looks for a device under `/sys/bus/iio/devices/` exposing `in_accel_{x,y,z}_raw`. List what your machine provides with:
+
+```bash
+grep . /sys/bus/iio/devices/iio:device*/name
+```
+
+On startup Mewtion prints which source it chose, so you can confirm at a glance which sensors it found.
 
 If no compatible accelerometer is detected, connect an Android device and use the phone fallback.
+
+### Motion feels choppy or lags behind the vehicle
+
+Mewtion prints the accelerometer's rate at startup. On a HID sensor hub that rate bounds everything, because the hub answers each `*_raw` read by fetching a fresh report, costing about one sampling period per axis. An accelerometer parked at 10 Hz therefore yields roughly 5 Hz of motion updates. Dedicated I2C accelerometers return immediately and are not affected.
+
+Sensor hubs commonly idle at 10 Hz. Mewtion asks for a faster rate at startup, but the attribute is usually root-owned, so the request is skipped for a normal user. Check the current rate:
+
+```bash
+cat /sys/bus/iio/devices/iio:device*/in_accel_sampling_frequency
+```
+
+To grant write access, add a udev rule such as `/etc/udev/rules.d/99-iio-sampling.rules`:
+
+```
+SUBSYSTEM=="iio", KERNEL=="iio:device*", RUN+="/bin/chgrp input /sys%p/in_accel_sampling_frequency", RUN+="/bin/chmod g+w /sys%p/in_accel_sampling_frequency"
+```
+
+Reload with `sudo udevadm control --reload && sudo udevadm trigger`, and make sure your user is in the `input` group. Raising a 10 Hz accelerometer to 100 Hz takes motion updates from about 5 Hz to 50 Hz.
 
 ### ADB cannot detect the phone
 
@@ -166,4 +192,4 @@ You can contribute by:
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.

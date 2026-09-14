@@ -1,17 +1,8 @@
+use crate::sensor::MotionSample;
 use std::io::{BufRead, BufReader};
 use std::net::TcpStream;
 use std::thread::sleep;
 use std::time::Duration;
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct MotionSample {
-    pub ax: f32,
-    pub ay: f32,
-    pub az: f32,
-    pub gx: f32,
-    pub gy: f32,
-    pub gz: f32,
-}
 
 pub fn run_tcp_bridge_blocking<F>(mut on_sample: F)
 where
