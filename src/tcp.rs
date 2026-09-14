@@ -43,3 +43,46 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
+
+    #[test]
+    fn bridge_emits_complete_samples_and_ignores_malformed_lines() {
+        let listener = TcpListener::bind("127.0.0.1:8765").expect("bind bridge test server");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept bridge connection");
+            stream
+                .write_all(
+                    b"not,enough,fields\n1,2,3,4,5,invalid\n1,-2.5,3.25,-4,5.5,-6.75\n",
+                )
+                .expect("send bridge test data");
+        });
+
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            run_tcp_bridge_blocking(
+                Arc::new(Mutex::new("127.0.0.1".to_owned())),
+                move |sample| sender.send(sample).expect("record parsed sample"),
+            );
+        });
+
+        let sample = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("receive the one valid motion sample");
+        assert_eq!(sample.ax, 1.0);
+        assert_eq!(sample.ay, -2.5);
+        assert_eq!(sample.az, 3.25);
+        assert_eq!(sample.gx, -4.0);
+        assert_eq!(sample.gy, 5.5);
+        assert_eq!(sample.gz, -6.75);
+        assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
+
+        server.join().expect("bridge test server should finish");
+    }
+}

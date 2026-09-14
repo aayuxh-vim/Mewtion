@@ -271,3 +271,262 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_TEMP_DIR: AtomicUsize = AtomicUsize::new(0);
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let sequence = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "mewtion-iio-tests-{}-{sequence}",
+                std::process::id()
+            ));
+            fs::create_dir(&path).expect("create isolated IIO fixture directory");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+
+        fn write(&self, name: &str, contents: &str) {
+            fs::write(self.0.join(name), contents).expect("write IIO fixture attribute");
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).expect("remove isolated IIO fixture directory");
+        }
+    }
+
+    fn write_axes(dir: &TempDir, kind: &str, values: [&str; 3]) {
+        for (axis, value) in ["x", "y", "z"].into_iter().zip(values) {
+            dir.write(&format!("in_{kind}_{axis}_raw"), value);
+        }
+    }
+
+    fn triple_with_zeroes(dir: &TempDir, kind: &str) -> Triple {
+        write_axes(dir, kind, ["0", "0", "0"]);
+        Triple::open(dir.path(), kind).expect("complete channel group should open")
+    }
+
+    #[test]
+    fn read_f32_trims_valid_values_and_rejects_invalid_inputs() {
+        let dir = TempDir::new();
+        dir.write("valid", "  -12.75\n");
+        dir.write("invalid", "12.5 Hz");
+
+        assert_eq!(read_f32(&dir.path().join("valid")), Some(-12.75));
+        assert_eq!(read_f32(&dir.path().join("invalid")), None);
+        assert_eq!(read_f32(&dir.path().join("missing")), None);
+    }
+
+    #[test]
+    fn triple_open_requires_all_three_raw_axes() {
+        let dir = TempDir::new();
+        dir.write("in_accel_x_raw", "1");
+        dir.write("in_accel_y_raw", "2");
+
+        assert!(Triple::open(dir.path(), "accel").is_none());
+
+        dir.write("in_accel_z_raw", "3");
+        assert!(Triple::open(dir.path(), "accel").is_some());
+    }
+
+    #[test]
+    fn triple_read_applies_attribute_precedence_defaults_and_axis_mask() {
+        let dir = TempDir::new();
+        write_axes(&dir, "accel", ["2", "4", "not-a-number"]);
+        dir.write("in_accel_scale", "10");
+        dir.write("in_accel_y_scale", "0.5");
+        dir.write("in_accel_offset", "1");
+        dir.write("in_accel_x_offset", "-1");
+
+        let triple = Triple::open(dir.path(), "accel").expect("complete accelerometer");
+
+        assert_eq!(triple.scale, [10.0, 0.5, 10.0]);
+        assert_eq!(triple.offset, [-1.0, 1.0, 1.0]);
+        assert_eq!(triple.read(PLANAR), Some([10.0, 2.5, 0.0]));
+        assert_eq!(triple.read([false; 3]), Some([0.0; 3]));
+        assert_eq!(triple.read([false, false, true]), None);
+    }
+
+    #[test]
+    fn triple_open_uses_identity_conversion_when_attributes_are_unusable() {
+        let dir = TempDir::new();
+        write_axes(&dir, "anglvel", ["1.5", "-2", "3"]);
+        dir.write("in_anglvel_scale", "invalid");
+        dir.write("in_anglvel_offset", "invalid");
+
+        let triple = Triple::open(dir.path(), "anglvel").expect("complete gyroscope");
+
+        assert_eq!(triple.read([true; 3]), Some([1.5, -2.0, 3.0]));
+    }
+
+    #[test]
+    fn sampling_rate_accepts_only_positive_numeric_frequencies() {
+        let dir = TempDir::new();
+        let frequency = "in_accel_sampling_frequency";
+
+        assert_eq!(sampling_rate(dir.path(), "accel"), None);
+        for invalid in ["0", "-25", "invalid"] {
+            dir.write(frequency, invalid);
+            assert_eq!(sampling_rate(dir.path(), "accel"), None);
+        }
+
+        dir.write(frequency, "62.5\n");
+        assert_eq!(sampling_rate(dir.path(), "accel"), Some(62.5));
+    }
+
+    #[test]
+    fn raise_sampling_rate_chooses_slowest_supported_rate_at_or_above_cap() {
+        let dir = TempDir::new();
+        dir.write("in_accel_sampling_frequency", "10");
+        dir.write(
+            "in_accel_sampling_frequency_available",
+            "garbage 200 50 125 100",
+        );
+
+        raise_sampling_rate(dir.path(), "accel");
+
+        assert_eq!(
+            fs::read_to_string(dir.path().join("in_accel_sampling_frequency")).unwrap(),
+            "100"
+        );
+    }
+
+    #[test]
+    fn raise_sampling_rate_uses_fastest_supported_rate_when_cap_is_unavailable() {
+        let dir = TempDir::new();
+        dir.write("in_accel_sampling_frequency", "10");
+        dir.write("in_accel_sampling_frequency_available", "12.5 25 50");
+
+        raise_sampling_rate(dir.path(), "accel");
+
+        assert_eq!(
+            fs::read_to_string(dir.path().join("in_accel_sampling_frequency")).unwrap(),
+            "50"
+        );
+    }
+
+    #[test]
+    fn raise_sampling_rate_defaults_to_cap_when_supported_rates_are_missing() {
+        let dir = TempDir::new();
+        dir.write("in_accel_sampling_frequency", "10");
+
+        raise_sampling_rate(dir.path(), "accel");
+
+        assert_eq!(
+            fs::read_to_string(dir.path().join("in_accel_sampling_frequency")).unwrap(),
+            "100"
+        );
+    }
+
+    #[test]
+    fn raise_sampling_rate_leaves_absent_or_fast_frequency_attributes_alone() {
+        let absent = TempDir::new();
+        raise_sampling_rate(absent.path(), "accel");
+        assert!(!absent.path().join("in_accel_sampling_frequency").exists());
+
+        let fast = TempDir::new();
+        fast.write("in_accel_sampling_frequency", "125.5");
+        fast.write("in_accel_sampling_frequency_available", "200");
+        raise_sampling_rate(fast.path(), "accel");
+        assert_eq!(
+            fs::read_to_string(fast.path().join("in_accel_sampling_frequency")).unwrap(),
+            "125.5"
+        );
+    }
+
+    #[test]
+    fn source_poll_rate_is_capped_and_description_reports_available_channels() {
+        let dir = TempDir::new();
+        let source = IioSource {
+            accel: triple_with_zeroes(&dir, "accel"),
+            gyro: Some(triple_with_zeroes(&dir, "anglvel")),
+            gravity: Some(triple_with_zeroes(&dir, "gravity")),
+            accel_hz: 250.0,
+        };
+
+        assert_eq!(source.poll_hz(), MAX_POLL_HZ);
+        assert_eq!(
+            source.describe(),
+            "accelerometer at 100 Hz, gyroscope, hardware gravity channel"
+        );
+    }
+
+    #[test]
+    fn source_description_reports_estimated_gravity_and_missing_gyro() {
+        let dir = TempDir::new();
+        let source = IioSource {
+            accel: triple_with_zeroes(&dir, "accel"),
+            gyro: None,
+            gravity: None,
+            accel_hz: 62.5,
+        };
+
+        assert_eq!(source.poll_hz(), 62.5);
+        assert_eq!(
+            source.describe(),
+            "accelerometer at 62 Hz, no gyroscope, estimated gravity"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "sample verified")]
+    fn stream_subtracts_hardware_gravity_and_reads_only_yaw_rate() {
+        let dir = TempDir::new();
+        write_axes(&dir, "accel", ["10", "20", "unread vertical axis"]);
+        write_axes(&dir, "gravity", ["1", "2", "unread vertical axis"]);
+        write_axes(
+            &dir,
+            "anglvel",
+            ["unread roll axis", "unread pitch axis", "3.5"],
+        );
+        let source = IioSource {
+            accel: Triple::open(dir.path(), "accel").unwrap(),
+            gyro: Triple::open(dir.path(), "anglvel"),
+            gravity: Triple::open(dir.path(), "gravity"),
+            accel_hz: MAX_POLL_HZ,
+        };
+
+        run_iio_source_blocking(source, |sample| {
+            assert_eq!(sample.ax, 9.0);
+            assert_eq!(sample.ay, 18.0);
+            assert_eq!(sample.az, 0.0);
+            assert_eq!(sample.gx, 0.0);
+            assert_eq!(sample.gy, 0.0);
+            assert_eq!(sample.gz, 3.5);
+            panic!("sample verified");
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "sample verified")]
+    fn estimated_gravity_seeds_from_first_reading_without_initial_lurch() {
+        let dir = TempDir::new();
+        write_axes(&dir, "accel", ["4", "-7", "unread vertical axis"]);
+        let source = IioSource {
+            accel: Triple::open(dir.path(), "accel").unwrap(),
+            gyro: None,
+            gravity: None,
+            accel_hz: MAX_POLL_HZ,
+        };
+
+        run_iio_source_blocking(source, |sample| {
+            assert_eq!(sample.ax, 0.0);
+            assert_eq!(sample.ay, 0.0);
+            assert_eq!(sample.az, 0.0);
+            assert_eq!(sample.gz, 0.0);
+            panic!("sample verified");
+        });
+    }
+}
