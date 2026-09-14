@@ -1,6 +1,7 @@
-size=24
+size=8
 color=#ff3b30
 opacity=1
-margin=0.03
-sensitivity=3.5
+margin=0.02
+sensitivity=9.5
 animation=Fluid
+ip=10.223.121.229

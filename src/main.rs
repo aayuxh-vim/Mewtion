@@ -7,20 +7,14 @@ use gtk4::{glib, Application, ApplicationWindow, DrawingArea};
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use tcp::MotionSample;
 
 const APP_ID: &str = "dev.mewtion.Overlay";
 
-// --- Particle System State ---
-
-struct Rng {
-    state: u32,
-}
-
+struct Rng { state: u32 }
 impl Rng {
-    fn new() -> Self {
-        Rng { state: 42 }
-    }
+    fn new() -> Self { Rng { state: 42 } }
     fn next_f64(&mut self) -> f64 {
         self.state ^= self.state << 13;
         self.state ^= self.state >> 17;
@@ -30,26 +24,13 @@ impl Rng {
 }
 
 struct Particle {
-    nx: f64,
-    ny: f64,
-    life: f64,
-    fade_rate: f64,
-    size: f64,
-    is_anchor: bool,
+    nx: f64, ny: f64, life: f64, fade_rate: f64, size: f64, is_anchor: bool,
 }
 
 struct AppState {
-    target_x: f64,
-    target_y: f64,
-    current_x: f64,
-    current_y: f64,
-    particles: Vec<Particle>,
-    rng: Rng,
-    config: MewtionConfig,
-    tick_count: u32,
+    target_x: f64, target_y: f64, current_x: f64, current_y: f64,
+    particles: Vec<Particle>, rng: Rng, config: MewtionConfig, tick_count: u32,
 }
-
-// --- Main Application ---
 
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
@@ -58,27 +39,16 @@ fn main() -> glib::ExitCode {
 }
 
 fn build_ui(app: &Application) {
-    let window = ApplicationWindow::builder()
-        .application(app)
-        .title("Mewtion")
-        .build();
+    let window = ApplicationWindow::builder().application(app).title("Mewtion").build();
 
-    // 1. Initialize Wayland Layer Shell
     window.init_layer_shell();
-    
-    // Set to Overlay layer (Always on top of standard windows)
     window.set_layer(Layer::Overlay);
-    
-    // Don't push other windows out of the way
     window.set_exclusive_zone(-1); 
-    
-    // Stretch to fill the entire screen
     window.set_anchor(Edge::Top, true);
     window.set_anchor(Edge::Bottom, true);
     window.set_anchor(Edge::Left, true);
     window.set_anchor(Edge::Right, true);
 
-    // 2. Make it transparent
     let css = gtk4::CssProvider::new();
     css.load_from_data("window { background: transparent; }");
     gtk4::style_context_add_provider_for_display(
@@ -87,7 +57,6 @@ fn build_ui(app: &Application) {
         gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
 
-    // 3. The Click-Through Magic (Native Wayland)
     window.connect_realize(|w| {
         if let Some(surface) = w.surface() {
             let empty_region = gtk4::cairo::Region::create();
@@ -95,17 +64,12 @@ fn build_ui(app: &Application) {
         }
     });
 
-    // 4. Load configuration on startup
     let loaded_config = MewtionConfig::load();
+    let shared_ip = Arc::new(Mutex::new(loaded_config.phone_ip.clone()));
+    
     let state = Rc::new(RefCell::new(AppState {
-        target_x: 0.0,
-        target_y: 0.0,
-        current_x: 0.0,
-        current_y: 0.0,
-        particles: Vec::new(),
-        rng: Rng::new(),
-        config: loaded_config,
-        tick_count: 0,
+        target_x: 0.0, target_y: 0.0, current_x: 0.0, current_y: 0.0,
+        particles: Vec::new(), rng: Rng::new(), config: loaded_config, tick_count: 0,
     }));
 
     let drawing_area = DrawingArea::new();
@@ -125,13 +89,7 @@ fn build_ui(app: &Application) {
             let (r, g, b) = s.config.color_rgb;
 
             for p in &s.particles {
-                let mut alpha = if p.is_anchor {
-                    p.life
-                } else {
-                    (p.life * std::f64::consts::PI).sin() * 0.75
-                };
-                
-                // Scale particle alpha by user-configured opacity
+                let mut alpha = if p.is_anchor { p.life } else { (p.life * std::f64::consts::PI).sin() * 0.75 };
                 alpha *= s.config.opacity;
 
                 cr.set_source_rgba(r, g, b, alpha);
@@ -146,8 +104,10 @@ fn build_ui(app: &Application) {
 
     let (sender, receiver) = std::sync::mpsc::channel::<MotionSample>();
 
+    // Pass the thread-safe IP string reference to the TCP module
+    let tcp_shared_ip = shared_ip.clone();
     std::thread::spawn(move || {
-        tcp::run_tcp_bridge_blocking(move |sample| {
+        tcp::run_tcp_bridge_blocking(tcp_shared_ip, move |sample| {
             let _ = sender.send(sample);
         });
     });
@@ -160,23 +120,35 @@ fn build_ui(app: &Application) {
         let mut s_guard = state_for_loop.borrow_mut();
         let s = &mut *s_guard;
 
-        // Hot Reload Configuration every ~1 second (60 frames)
         s.tick_count += 1;
         if s.tick_count % 60 == 0 {
             s.config = MewtionConfig::load();
+            
+            // Push any IP changes live to the network thread
+            if let Ok(mut locked_ip) = shared_ip.lock() {
+                *locked_ip = s.config.phone_ip.clone();
+            }
         }
 
         let current_sens = s.config.sensitivity as f32;
 
         while let Ok(sample) = receiver.try_recv() {
-            let combined_lateral = (sample.ax / current_sens) + (sample.gz * GYRO_YAW_WEIGHT);
-            let combined_forward = sample.ay / current_sens;
+            // Clamp tiny sensor fluctuations to exactly 0.0 to prevent drifting
+            // when the phone is completely still on a table.
+            let mut ax = sample.ax;
+            let mut ay = sample.ay;
+            let mut gz = sample.gz;
+
+            if ax.abs() < 0.15 { ax = 0.0; }
+            if ay.abs() < 0.15 { ay = 0.0; }
+            if gz.abs() < 0.05 { gz = 0.0; }
+
+            let combined_lateral = (ax / current_sens) + (gz * GYRO_YAW_WEIGHT);
+            let combined_forward = ay / current_sens;
 
             s.target_x = (combined_lateral as f64).clamp(-1.0, 1.0);
             s.target_y = (combined_forward as f64).clamp(-1.0, 1.0);
         }
-
-        // Smooth physics interpolation
         s.current_x += (s.target_x - s.current_x) * 0.05;
         s.current_y += (s.target_y - s.current_y) * 0.05;
 
@@ -199,17 +171,10 @@ fn build_ui(app: &Application) {
                     if s.particles.len() >= target_count { break; }
 
                     let is_left = s.rng.next_f64() < 0.5;
-                    // Spawn particles respecting custom margin offset
-                    let nx = if is_left {
-                        margin + s.rng.next_f64() * 0.05
-                    } else {
-                        (1.0 - margin) - s.rng.next_f64() * 0.05
-                    };
+                    let nx = if is_left { margin + s.rng.next_f64() * 0.05 } else { (1.0 - margin) - s.rng.next_f64() * 0.05 };
                     let ny = s.rng.next_f64();
                     
                     let random_fade = 0.005 + s.rng.next_f64() * 0.01;
-                    
-                    // Fluid vs Rigid particle sizing
                     let base_size = s.config.dot_size;
                     let particle_size = if s.config.animation_mode == "Rigid" {
                         base_size
@@ -217,14 +182,7 @@ fn build_ui(app: &Application) {
                         (base_size * 0.85) + s.rng.next_f64() * (base_size * 0.3)
                     };
 
-                    s.particles.push(Particle {
-                        nx,
-                        ny,
-                        life: 1.0,
-                        fade_rate: random_fade,
-                        size: particle_size,
-                        is_anchor: false,
-                    });
+                    s.particles.push(Particle { nx, ny, life: 1.0, fade_rate: random_fade, size: particle_size, is_anchor: false });
                 }
             }
         } else {
@@ -233,24 +191,8 @@ fn build_ui(app: &Application) {
                 for i in 0..10 {
                     let ny = (i as f64 + 0.5) / 10.0;
                     let base_size = s.config.dot_size;
-
-                    // Place anchor dots along the customized edge margins
-                    s.particles.push(Particle {
-                        nx: margin,
-                        ny,
-                        life: 0.0,
-                        fade_rate: 0.0,
-                        size: base_size,
-                        is_anchor: true,
-                    });
-                    s.particles.push(Particle {
-                        nx: 1.0 - margin,
-                        ny,
-                        life: 0.0,
-                        fade_rate: 0.0,
-                        size: base_size,
-                        is_anchor: true,
-                    });
+                    s.particles.push(Particle { nx: margin, ny, life: 0.0, fade_rate: 0.0, size: base_size, is_anchor: true });
+                    s.particles.push(Particle { nx: 1.0 - margin, ny, life: 0.0, fade_rate: 0.0, size: base_size, is_anchor: true });
                 }
             }
         }
@@ -268,10 +210,7 @@ fn build_ui(app: &Application) {
             }
         }
 
-        s.particles.retain(|p| {
-            p.life > 0.0 && p.nx > -0.1 && p.nx < 1.1 && p.ny > -0.1 && p.ny < 1.1
-        });
-
+        s.particles.retain(|p| p.life > 0.0 && p.nx > -0.1 && p.nx < 1.1 && p.ny > -0.1 && p.ny < 1.1);
         drawing_area.queue_draw();
 
         glib::ControlFlow::Continue

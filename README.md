@@ -10,15 +10,15 @@ The system consists of three parts working together for ultra-low latency:
 
 1. **Sensor (Laptop / Android)**
 
-   Mewtion first attempts to detect and use the laptop's built-in accelerometer. If a compatible accelerometer is not available, it falls back to an Android companion app that reads gravity-filtered linear acceleration using `TYPE_LINEAR_ACCELERATION`.
+   Mewtion first attempts to detect and use the laptop's built-in accelerometer. If a compatible accelerometer is not available, it falls back to an Android companion app that reads both gravity-filtered linear acceleration and gyroscope yaw.
 
-2. **Tunnel (ADB)**
+2. **Tunnel (Network / ADB)**
 
-   When using the Android fallback, the connection is established through USB using ADB port forwarding. Sensor data is streamed over a TCP socket.
+   When using the Android fallback, the connection is network-agnostic. It can be established wirelessly over a local Wi-Fi network, a mobile hotspot, or through a physical USB cable using ADB port forwarding. Sensor data is streamed over a lightweight TCP socket.
 
-3. **Overlay (Linux)**
+3. **Overlay & Control Panel (Linux)**
 
-   A Rust/GTK4 application renders an always-on-top, click-through canvas natively on Wayland. It uses **Layer Shell** (`gtk4-layer-shell`) to bind to the compositor and features a custom 60 FPS particle physics engine with detaching anchors and organic flow patterns.
+   A Rust/GTK4 application renders an always-on-top, click-through canvas natively on Wayland. It uses **Layer Shell** (`gtk4-layer-shell`) to bind to the compositor and features a custom 60 FPS particle physics engine. A companion `iced`-based GUI Control Panel runs alongside it for live configuration.
 
 > **Note on Compositors**
 >
@@ -26,23 +26,21 @@ The system consists of three parts working together for ultra-low latency:
 
 ## Prerequisites
 
-* Linux desktop environment with a **Wayland compositor supporting Layer Shell**
-* **Rust / Cargo**
-* **ADB (Android Debug Bridge)** for the Android fallback
-
-  * On Arch Linux:
-
+- Linux desktop environment with a **Wayland compositor supporting Layer Shell**
+- **Rust / Cargo**
+- **ADB (Android Debug Bridge)** (Only required for the USB Android fallback)
+  - On Arch Linux:
     ```bash
     sudo pacman -S android-tools
     ```
-* An Android device running the **[Mewtion-Android](https://github.com/aayuxh-vim/Mewtion-Android)** companion app with **USB Debugging** enabled
-* A laptop with a supported accelerometer for laptop-based sensor input
+- An Android device running the [**Mewtion-Android**](https://github.com/aayuxh-vim/Mewtion-Android) companion app
+- A laptop with a supported accelerometer for laptop-based sensor input
 
 ## Usage & Automation
 
 ### Quick Start (Using the Shell Script)
 
-We provide an automated `run.sh` script that checks for your connected Android device, sets up ADB port forwarding automatically, and launches the Mewtion overlay in release mode.
+We provide an automated `run.sh` script that checks for your connected Android device, sets up ADB port forwarding automatically (if plugged in), and launches both the GUI Control Panel and the Mewtion overlay.
 
 1. Make sure the script is executable (first time only):
 
@@ -56,37 +54,21 @@ We provide an automated `run.sh` script that checks for your connected Android d
    ./run.sh
    ```
 
-### Manual Setup & Running
+### Connection Modes & Manual Setup
 
-#### 1. Build Mewtion
+Once the Control Panel opens, you can select how you want to connect to your phone:
 
-Clone the repository and build the Linux overlay:
+- **Mobile Hotspot Mode:** Connect your laptop to your phone's Wi-Fi hotspot. Click the **"Auto-Detect Hotspot"** button in the Control Panel to automatically find and connect to your phone's IP address.
+- **Wi-Fi Network Mode:** Connect both devices to the same Wi-Fi router. Enter your phone's IP address into the Control Panel and click **"Save & Apply"**.
+- **USB Mode:** Connect your phone via USB with USB Debugging enabled. Click **"USB Mode"** in the Control Panel (defaults to `127.0.0.1`).
+
+#### Manual Build Execution
+
+If you prefer not to use the script, you can build and run the components manually:
 
 ```bash
 cargo build --release
-```
-
-#### 2. Android Fallback Setup
-
-If your laptop does not have a compatible accelerometer:
-
-1. Download and install the companion app from the **[Mewtion-Android Repository](https://github.com/aayuxh-vim/Mewtion-Android)**.
-
-2. Connect your phone via USB with USB Debugging enabled.
-
-3. Forward the sensor TCP port:
-
-   ```bash
-   adb forward tcp:8765 tcp:8765
-   ```
-
-4. Open the Mewtion app on your phone. It features a background foreground service so it can stay active even when minimized.
-
-#### 3. Run Mewtion
-
-Start the overlay natively on Wayland:
-
-```bash
+cargo run --release --bin control_panel &
 cargo run --release --bin Mewtion
 ```
 
@@ -96,51 +78,49 @@ Mewtion is designed around low-latency motion feedback and smooth rendering.
 
 Key goals include:
 
-* 60 FPS particle rendering
-* Low-latency sensor processing
-* Native click-through overlay via Wayland Layer Shell
-* Minimal CPU and memory usage
-* Real-time acceleration response
-* Automatic sensor selection
-* Automatic fallback to an Android device when required
+- 60 FPS particle rendering
+- Adaptive software deadband (noise gate) to eliminate anchor drift on sensitive hardware
+- Low-latency sensor processing (Sensor Fusion combining Accelerometer + Gyroscope)
+- Native click-through overlay via Wayland Layer Shell
+- Minimal CPU and memory usage
+- Automatic fallback to an Android device when required
 
 ## Future Enhancements
 
-* [x] **Wayland Native Support:** Add native Wayland support using Layer Shell protocols.
-* [ ] **Laptop Accelerometer Support:** Detect and use the laptop's built-in accelerometer when available, eliminating the need for a phone and USB connection.
-* [x] **UI:** Add a graphical settings menu to customize dot size, opacity, margins, acceleration sensitivity, and animation behavior.
-* [ ] **Sensor Calibration:** Add automatic and manual calibration to account for device orientation and sensor bias.
-* [x] **Sensor Fusion:** Combine accelerometer and gyroscope data for more accurate motion detection and smoother movement.
-* [ ] **BLE Support:** Implement Bluetooth Low Energy as an alternative to the USB connection.
-* [ ] **iOS Support:** Create an iOS companion app to broadcast sensor data.
-* [ ] **Windows Support:** Port the window management logic to the Windows API.
-* [ ] **Multi-Monitor Support:** Support motion cues across multiple displays.
-* [ ] **Adaptive Motion Sensitivity:** Automatically adjust dot movement based on the intensity of detected motion.
+- [x] **Wayland Native Support:** Add native Wayland support using Layer Shell protocols.
+- [ ] **Laptop Accelerometer Support:** Detect and use the laptop's built-in accelerometer when available, eliminating the need for a phone and USB connection.
+- [x] **UI:** Add a graphical settings menu to customize dot size, opacity, margins, acceleration sensitivity, and animation behavior.
+- [ ] **Sensor Calibration:** Add automatic and manual calibration to account for device orientation and sensor bias.
+- [x] **Sensor Fusion:** Combine accelerometer and gyroscope data for more accurate motion detection and smoother movement.
+- [ ] **iOS Support:** Create an iOS companion app to broadcast sensor data. *(Note: I do not own a Mac to develop the iOS companion app. If you are an iOS developer, contributions using* *`CoreMotion`* *and* *`NWConnection`* *are highly welcome! You can reference the* [***Mewtion-Android***](https://github.com/aayuxh-vim/Mewtion-Android) *repository for the expected stream format).*
+- [ ] **Windows Support:** Port the window management logic to the Windows API.
+- [ ] **Adaptive Motion Sensitivity:** Automatically adjust dot movement based on the intensity of detected motion.
+- [ ] **SteamOS In-Game Overlay Support:** Add support for displaying Mewtion's motion cues over games running on SteamOS, with compatibility for gamescope, fullscreen, and borderless modes while maintaining click-through behavior and minimal performance overhead.
 
 ## Troubleshooting
 
 ### Mewtion does not detect the laptop accelerometer
 
-Make sure your laptop exposes its accelerometer through a Linux-supported sensor interface.
+Make sure your laptop exposes its accelerometer through a Linux-supported sensor interface. If no compatible accelerometer is detected, connect an Android device and use the phone fallback.
 
-If no compatible accelerometer is detected, connect an Android device and use the phone fallback.
+### Overlay dots drift when the phone is still
+
+Ensure you are running the latest version of the Linux overlay. A software deadband has been implemented to filter out hardware-specific micro-vibrations and noise.
+
+### Cannot connect via Wi-Fi/Hotspot
+
+Ensure your phone's screen is on and the Mewtion Android app is actively running. If using a local network, ensure your router does not block local peer-to-peer device communication (AP Isolation).
 
 ### ADB cannot detect the phone
 
 Check that:
 
-* USB debugging is enabled.
-* The phone is connected using a USB data cable.
-* The device is authorized on the phone.
-* ADB is installed and available in your terminal.
+- USB debugging is enabled.
+- The phone is connected using a USB data cable.
+- The device is authorized on the phone.
+- ADB is installed and available in your terminal.
 
-Check the connection with:
-
-```bash
-adb devices
-```
-
-Then create the port forward:
+Check the connection with `adb devices`, then create the port forward manually if the script fails:
 
 ```bash
 adb forward tcp:8765 tcp:8765
@@ -150,19 +130,28 @@ adb forward tcp:8765 tcp:8765
 
 Make sure you are running under a Wayland session and your compositor supports the Layer Shell protocol.
 
+## Steam Deck Testing
+
+Steam Deck users and testers are welcome to experiment with Mewtion on their devices and help evaluate potential **SteamOS in-game overlay support**.
+
+If you have a Steam Deck, feel free to test Mewtion under SteamOS and report your experience, including compositor behavior, fullscreen and gamescope compatibility, performance, and any issues encountered.
+
+Feedback and contributions from Steam Deck users are especially welcome as we explore native in-game overlay support.
+
+
 ## Contributing
 
 Contributions are welcome.
 
 You can contribute by:
 
-* Adding support for new sensor sources
-* Improving sensor processing
-* Optimizing the particle physics engine
-* Developing the Android or future iOS companion apps
-* Adding configuration options
-* Fixing bugs
-* Improving documentation
+- Adding support for new sensor sources
+- Improving sensor processing
+- Optimizing the particle physics engine
+- Developing the Android or future iOS companion apps
+- Adding configuration options
+- Fixing bugs
+- Improving documentation
 
 ## License
 

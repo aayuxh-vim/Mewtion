@@ -9,17 +9,19 @@ pub struct MewtionConfig {
     pub margin_pct: f64,
     pub sensitivity: f64,
     pub animation_mode: String,
+    pub phone_ip: String, 
 }
 
 impl Default for MewtionConfig {
     fn default() -> Self {
         Self {
             dot_size: 16.0,
-            color_rgb: (1.0, 1.0, 1.0), // Default White
-            opacity: 0.85,              // 85% visible
-            margin_pct: 0.03,           // 3% from the edge
-            sensitivity: 3.5,           // Default acceleration division scalar
+            color_rgb: (1.0, 1.0, 1.0),
+            opacity: 0.85,
+            margin_pct: 0.03,
+            sensitivity: 3.5,
             animation_mode: "Fluid".to_string(),
+            phone_ip: "127.0.0.1".to_string(), // Defaults to USB
         }
     }
 }
@@ -27,18 +29,14 @@ impl Default for MewtionConfig {
 impl MewtionConfig {
     pub fn load() -> Self {
         let path = "mewtion_config.txt";
-        if !Path::new(path).exists() {
-            return Self::default();
-        }
+        if !Path::new(path).exists() { return Self::default(); }
 
         let mut config = Self::default();
 
         if let Ok(contents) = fs::read_to_string(path) {
             for line in contents.lines() {
                 let parts: Vec<&str> = line.split('=').collect();
-                if parts.len() != 2 {
-                    continue;
-                }
+                if parts.len() != 2 { continue; }
 
                 let key = parts[0].trim();
                 let value = parts[1].trim();
@@ -50,6 +48,7 @@ impl MewtionConfig {
                     "margin" => if let Ok(v) = value.parse::<f64>() { config.margin_pct = v; }
                     "sensitivity" => if let Ok(v) = value.parse::<f64>() { config.sensitivity = v; }
                     "animation" => config.animation_mode = value.to_string(),
+                    "ip" => config.phone_ip = value.to_string(),
                     _ => {}
                 }
             }
