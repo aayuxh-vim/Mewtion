@@ -96,19 +96,8 @@ jobs:
           mkdir -p "${DEB_DIR}/usr/share/doc/mewtion"
           mkdir -p "${DEB_DIR}/etc/mewtion"
 
-          # Debian package control file
-          cat << EOF > "${DEB_DIR}/DEBIAN/control"
-Package: mewtion
-Version: ${DEB_VER}
-Section: utils
-Priority: optional
-Architecture: amd64
-Maintainer: Mewtion <https://github.com/aayuxh-vim/Mewtion>
-Depends: libc6, libgtk-4-1
-Description: Vehicle motion cues overlay to reduce motion sickness
- Mewtion creates a transparent, click-through overlay of dots along
- screen edges driven by accelerometer data to reduce motion sickness.
-EOF
+          # Generate Debian control file from template
+          sed "s/__VERSION__/${DEB_VER}/g" assets/debian-control.template > "${DEB_DIR}/DEBIAN/control"
           chmod 755 "${DEB_DIR}/DEBIAN"
           chmod 644 "${DEB_DIR}/DEBIAN/control"
 
@@ -119,24 +108,8 @@ EOF
           cp -d /usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so* "${DEB_DIR}/usr/lib/mewtion/" 2>/dev/null || \
           cp -d /usr/local/lib/libgtk4-layer-shell.so* "${DEB_DIR}/usr/lib/mewtion/" 2>/dev/null || true
 
-          # System-wide launcher script (/usr/bin/mewtion)
-          cat << 'EOF' > "${DEB_DIR}/usr/bin/mewtion"
-#!/usr/bin/env bash
-export LD_LIBRARY_PATH="/usr/lib/mewtion:${LD_LIBRARY_PATH:-}"
-
-if command -v adb &>/dev/null && adb devices | grep -qw "device"; then
-  adb forward tcp:8765 tcp:8765 2>/dev/null || true
-fi
-
-/usr/lib/mewtion/control_panel &
-CP_PID=$!
-/usr/lib/mewtion/Mewtion &
-MW_PID=$!
-
-trap "kill $CP_PID $MW_PID 2>/dev/null" EXIT INT TERM
-wait
-EOF
-
+          # System-wide launcher script
+          cp assets/mewtion-launcher.sh "${DEB_DIR}/usr/bin/mewtion"
           chmod 755 "${DEB_DIR}/usr/bin/mewtion"
           chmod 755 "${DEB_DIR}/usr/lib/mewtion/Mewtion" "${DEB_DIR}/usr/lib/mewtion/control_panel"
 
@@ -173,24 +146,7 @@ EOF
           cp mewtion_config.txt "${APPDIR}/"
 
           # AppRun launcher script
-          cat << 'EOF' > "${APPDIR}/AppRun"
-#!/usr/bin/env bash
-HERE="$(dirname "$(readlink -f "${0}")")"
-export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH:-}"
-export PATH="${HERE}/usr/bin:${PATH:-}"
-
-if command -v adb &>/dev/null && adb devices | grep -qw "device"; then
-  adb forward tcp:8765 tcp:8765 2>/dev/null || true
-fi
-
-"${HERE}/usr/bin/control_panel" &
-CP_PID=$!
-"${HERE}/usr/bin/Mewtion" &
-MW_PID=$!
-
-trap "kill $CP_PID $MW_PID 2>/dev/null" EXIT INT TERM
-wait
-EOF
+          cp assets/AppRun "${APPDIR}/AppRun"
           chmod +x "${APPDIR}/AppRun" "${APPDIR}/usr/bin/"*
 
           # Extract appimagetool to bypass runner FUSE restrictions

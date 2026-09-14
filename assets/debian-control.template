@@ -1,0 +1,10 @@
+Package: mewtion
+Version: __VERSION__
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Mewtion <https://github.com/aayuxh-vim/Mewtion>
+Depends: libc6, libgtk-4-1
+Description: Vehicle motion cues overlay to reduce motion sickness
+ Mewtion creates a transparent, click-through overlay of dots along
+ screen edges driven by accelerometer data to reduce motion sickness.

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -e
+
+HERE="$(dirname "$(readlink -f "${0}")")"
+export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH:-}"
+export PATH="${HERE}/usr/bin:${PATH:-}"
+
+if command -v adb &>/dev/null && adb devices | grep -qw "device"; then
+  adb forward tcp:8765 tcp:8765 2>/dev/null || true
+fi
+
+"${HERE}/usr/bin/control_panel" &
+CP_PID=$!
+"${HERE}/usr/bin/Mewtion" &
+MW_PID=$!
+
+trap "kill $CP_PID $MW_PID 2>/dev/null" EXIT INT TERM
+wait
