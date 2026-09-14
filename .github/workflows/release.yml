@@ -37,7 +37,8 @@ jobs:
             libxkbcommon-dev \
             librsvg2-dev \
             libvulkan-dev \
-            gobject-introspection
+            gobject-introspection \
+            valac
 
       - name: Build & Install gtk4-layer-shell
         run: |
