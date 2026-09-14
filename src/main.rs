@@ -1,11 +1,13 @@
 mod config;
+mod dotview;
 mod iio;
 mod sensor;
 mod tcp;
 
 use config::MewtionConfig;
+use dotview::DotView;
 use gtk4::prelude::*;
-use gtk4::{glib, Application, ApplicationWindow, DrawingArea};
+use gtk4::{glib, Application, ApplicationWindow};
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
 use sensor::MotionSample;
 use std::cell::RefCell;
@@ -110,38 +112,9 @@ fn build_ui(app: &Application) {
         tick_count: 0,
     }));
 
-    let drawing_area = DrawingArea::new();
+    let drawing_area = DotView::default();
     drawing_area.set_hexpand(true);
     drawing_area.set_vexpand(true);
-
-    {
-        let state = state.clone();
-        drawing_area.set_draw_func(move |_area, cr, width, height| {
-            let s = state.borrow();
-            let w = width as f64;
-            let h = height as f64;
-
-            cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
-            cr.paint().ok();
-
-            let (r, g, b) = s.config.color_rgb;
-
-            for p in &s.particles {
-                let mut alpha = if p.is_anchor {
-                    p.life
-                } else {
-                    (p.life * std::f64::consts::PI).sin() * 0.75
-                };
-                
-                // Scale particle alpha by user-configured opacity
-                alpha *= s.config.opacity;
-
-                cr.set_source_rgba(r, g, b, alpha);
-                cr.arc(p.nx * w, p.ny * h, p.size / 2.0, 0.0, std::f64::consts::TAU);
-                cr.fill().ok();
-            }
-        });
-    }
 
     window.set_child(Some(&drawing_area));
     window.present();
@@ -285,7 +258,36 @@ fn build_ui(app: &Application) {
             p.life > 0.0 && p.nx > -0.1 && p.nx < 1.1 && p.ny > -0.1 && p.ny < 1.1
         });
 
-        drawing_area.queue_draw();
+        // Project the particles into widget pixels for the canvas to draw.
+        let width = WidgetExt::width(&drawing_area) as f64;
+        let height = WidgetExt::height(&drawing_area) as f64;
+        if width <= 0.0 || height <= 0.0 {
+            // Not allocated yet; positions would all collapse onto the origin.
+            return glib::ControlFlow::Continue;
+        }
+        let opacity = s.config.opacity;
+        let (r, g, b) = s.config.color_rgb;
+
+        let dots = s
+            .particles
+            .iter()
+            .map(|p| {
+                let alpha = if p.is_anchor {
+                    p.life
+                } else {
+                    (p.life * std::f64::consts::PI).sin() * 0.75
+                };
+                (
+                    (p.nx * width) as f32,
+                    (p.ny * height) as f32,
+                    p.size as f32,
+                    (alpha * opacity) as f32,
+                )
+            })
+            .collect();
+
+        drop(s_guard);
+        drawing_area.set_dots((r as f32, g as f32, b as f32), dots);
 
         glib::ControlFlow::Continue
     });
