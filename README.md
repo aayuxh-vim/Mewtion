@@ -128,8 +128,6 @@ Key goals include:
 - [ ] **BLE Support:** Implement Bluetooth Low Energy as an alternative to the USB connection.
 - [ ] **iOS Support:** Create an iOS companion app to broadcast sensor data. *(Note: I do not own a Mac to develop the iOS companion app. If you are an iOS developer, contributions using* *`CoreMotion`* *and* *`NWConnection`* *are highly welcome! You can reference the* [***Mewtion-Android***](https://github.com/aayuxh-vim/Mewtion-Android) *repository for the expected stream format).*
 - [ ] **Windows Support:** Port the window management logic to the Windows API.
-- [ ] **Multi-Monitor Support:** Support motion cues across multiple displays.
-- [ ] **Adaptive Motion Sensitivity:** Automatically adjust dot movement based on the intensity of detected motion.
 - [ ] **SteamOS In-Game Overlay Support:** Add support for displaying Mewtion's motion cues over games running on SteamOS, with compatibility for gamescope, fullscreen, and borderless modes while maintaining click-through behavior and minimal performance overhead.
 
 ## Troubleshooting
