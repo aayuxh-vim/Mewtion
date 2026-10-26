@@ -131,12 +131,28 @@ jobs:
           mkdir -p "${APPDIR}/usr/lib"
           mkdir -p "${APPDIR}/usr/share/icons/hicolor/scalable/apps"
 
-          # Copy binaries and bundled libraries
+          # Copy binaries
           cp target/release/Mewtion "${APPDIR}/usr/bin/"
           cp target/release/control_panel "${APPDIR}/usr/bin/"
+          
+          # Bundle GTK4 Layer Shell
           cp -d /usr/lib/libgtk4-layer-shell.so* "${APPDIR}/usr/lib/" 2>/dev/null || \
-          cp -d /usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so* "${APPDIR}/usr/lib/" 2>/dev/null || \
-          cp -d /usr/local/lib/libgtk4-layer-shell.so* "${APPDIR}/usr/lib/" 2>/dev/null || true
+          cp -d /usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so* "${APPDIR}/usr/lib/" 2>/dev/null || true
+
+          # === FIX FOR APPIMAGE CATALOG TESTS ===
+          # Dynamically resolve and copy required non-system shared libraries
+          # This pulls in libgtk-4.so, libxkbcommon-x11.so, and other dependencies to ensure self-containment
+          ldd target/release/Mewtion target/release/control_panel | awk 'NF == 4 { print $3; }' | grep -v 'libc\.so\|libm\.so\|libpthread\.so\|libdl\.so\|libresolv\.so\|librt\.so\|ld-linux' | while read -r lib; do
+            if [ -f "$lib" ]; then
+              cp -n "$lib" "${APPDIR}/usr/lib/"
+            fi
+          done
+
+          # Manual failsafe for the specific libraries flagged by the AppImage bot
+          cp -d /usr/lib/x86_64-linux-gnu/libgtk-4.so* "${APPDIR}/usr/lib/" 2>/dev/null || true
+          cp -d /usr/lib/x86_64-linux-gnu/libxkbcommon*.so* "${APPDIR}/usr/lib/" 2>/dev/null || true
+          cp -d /usr/lib/x86_64-linux-gnu/libwayland-*.so* "${APPDIR}/usr/lib/" 2>/dev/null || true
+          # ======================================
 
           # Desktop file and Icon
           cp assets/dev.mewtion.Overlay.desktop "${APPDIR}/"
