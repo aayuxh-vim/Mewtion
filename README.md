@@ -4,6 +4,12 @@ An open-source Linux desktop implementation inspired by Apple's **Vehicle Motion
 
 Mewtion helps reduce motion sickness when working on your laptop in a moving vehicle. It creates a transparent, click-through overlay of dots along the edges of your screen. Using real-time accelerometer data, the dots drift in the opposite direction of the vehicle's movement, helping resolve the sensory conflict between your stationary screen and the physical motion your inner ear feels.
 
+## Demo
+
+https://github.com/user-attachments/assets/1a454867-f16b-4b72-ab93-a5af378831a5
+
+
+
 ## Architecture
 
 The system consists of three parts working together for ultra-low latency:
